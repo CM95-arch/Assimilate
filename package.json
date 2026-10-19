@@ -1,0 +1,24 @@
+{
+  "name": "assimilate",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "patterns": "vite-node scripts/patterns.ts",
+    "e2e": "node e2e/run.mjs",
+    "build:single": "npm run build && node scripts/single-file.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "playwright-core": "1.56.1",
+    "typescript": "5.9.3",
+    "vite": "6.4.1",
+    "vite-node": "3.2.4",
+    "vitest": "3.2.4"
+  }
+}

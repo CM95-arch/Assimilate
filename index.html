@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#FBFBF9" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Assimilate" />
+    <meta name="description" content="One black square on a white grid. It grows by itself. Watch a living colony emerge from simple rules." />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon-180.png" />
+    <title>Assimilate</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="field" aria-label="The grid: your black colony growing across pale soil" role="img"></canvas>
+
+      <header id="hud" aria-label="Colony status">
+        <div class="stat" id="stat-pop">
+          <span class="stat-label">Population</span>
+          <span class="stat-value" data-v>1</span>
+          <span class="stat-rate" data-r>+0/s</span>
+        </div>
+        <div class="stat" id="stat-territory">
+          <span class="stat-label">Territory</span>
+          <span class="stat-value" data-v>0%</span>
+          <span class="stat-rate" data-r>1 cell</span>
+        </div>
+        <div class="stat" id="stat-status">
+          <span class="stat-label">Status</span>
+          <span class="stat-value" data-v>Growing</span>
+          <span class="stat-rate" data-r>Scale 1</span>
+        </div>
+      </header>
+
+      <pre id="diag" hidden aria-hidden="true"></pre>
+      <div id="banner" aria-live="polite"></div>
+      <div id="tip" hidden></div>
+      <div id="toasts" aria-live="polite"></div>
+
+      <section id="controls" aria-label="Simulation controls">
+        <button id="pause-btn" class="ctl" type="button" aria-label="Pause"></button>
+        <div class="seg" id="speed" role="group" aria-label="Simulation speed">
+          <button type="button" data-speed="1" aria-pressed="true">1×</button>
+          <button type="button" data-speed="2" aria-pressed="false">2×</button>
+          <button type="button" data-speed="4" aria-pressed="false">4×</button>
+        </div>
+      </section>
+
+      <section id="sheet" aria-label="Panel" hidden>
+        <div class="sheet-head">
+          <h2 id="sheet-title">Colony</h2>
+          <button class="close" id="sheet-close" type="button" aria-label="Close panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <div class="sheet-body" id="sheet-body"></div>
+      </section>
+
+      <nav id="tabs" aria-label="Main">
+        <button type="button" data-tab="colony">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5" class="fill"/><rect x="13" y="4" width="7" height="7" rx="1.5" class="fill"/><rect x="4" y="13" width="7" height="7" rx="1.5" class="fill"/></svg><span>Colony</span><i class="dot" hidden></i>
+        </button>
+        <button type="button" data-tab="upgrades" data-locked>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/><path d="M5 20h14"/></svg><span>Upgrades</span>
+        </button>
+        <button type="button" data-tab="mutations" data-locked>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/><path d="M11 7.5h3.5V13"/></svg><span>Mutations</span>
+        </button>
+        <button type="button" data-tab="evolution" data-locked>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 4.5v9L12 21l-7.5-4.5v-9z"/><path d="M12 8v8M8.5 10l7 4M15.5 10l-7 4"/></svg><span>Evolution</span>
+        </button>
+        <button type="button" data-tab="stats">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V12M12 20V5M19 20v-9"/></svg><span>Stats</span>
+        </button>
+        <button type="button" data-tab="settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span>Settings</span>
+        </button>
+      </nav>
+
+      <div id="modal-root"></div>
+      <noscript>Assimilate needs JavaScript to run.</noscript>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
