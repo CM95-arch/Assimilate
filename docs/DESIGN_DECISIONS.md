@@ -93,6 +93,48 @@ Veins went through two versions: a visible supply network of lines, then pulses 
 capital to weak spots. Neither added a decision or a feeling of control in playtesting, so it was
 removed. Saves that owned it simply drop the level on load.
 
+## Steering: rally flag, landmarks and water (0.3.0)
+
+Playtesting showed the mid-game turning passive: no way to point the territory anywhere, and
+nothing on the map worth pointing at. The flag, landmarks and water work together to fix that.
+
+**Rally flag.** Tap open ground or enemy territory to plant your flag; tap the flag (or your own
+ground) to take it down. There's only one flag and no upgrades for it. While a flag is up, half of
+each attempt's border samples are the nearest of 6 random border cells to the flag, and every
+candidate step gets a ×e^(distance gained) preference toward it. In tests that's about 2.7× the
+growth toward the flag while the opposite side keeps about half its normal growth and the total
+is unchanged. The flag is taken down automatically when your territory reaches its cell.
+
+**Landmarks.** About one in every 48×48 region (50% chance), never within 16 cells of your start or
+on water. Holding the cell gives its bonus, and duplicates stack:
+
+| Landmark | Symbol | Bonus |
+| --- | --- | --- |
+| Spring | ● | +25% energy (claims and conversions) |
+| Watchtower | ▲ | +15% resistance |
+| War Camp | ◆ | +15% conversion power |
+| Crossroads | ✚ | +15% expansion rate |
+| Forge | ■ | Upgrades 10% cheaper |
+
+A held landmark cell resists 2.5× harder, so it's worth fighting over. Rivals use the same flag
+mechanic: every ~8 s each rival aims at the nearest landmark it doesn't hold within 45 cells of
+its territory, so you will race them, and they come for yours. Rival flags are drawn smaller in
+their colour.
+
+**Terrain: water only, drawn as empty white space.** A first version also had rough and fertile
+ground in pale beige and green. It was dropped before release because the colours worked against
+the minimalist white look. What's left is water: lakes and winding rivers, generated from the
+world seed with value noise, so nothing is stored and it's identical after loading. Water is
+about 13% of the map. It can't be claimed or crossed (Outposts can jump it), and it's drawn as
+gaps in the grid, so it reads as negative space that territory flows around. Your start is always
+dry for about 8 cells, fading in by 22. Rivers originally boxed territories in completely, so they
+have fords every so often: chokepoints rather than walls.
+
+**Drawing.** The ground is cached as 128×128-cell images (1 pixel per cell, or per 4×4 cells far
+out) and drawn nearest-neighbour, then the gaps between cells are cut over it. Far out, open
+ground is a faint off-white so the pure-white water still shows. Images are built a few
+per frame, so a big zoom-out never stalls. A landmark keeps a readable size at any zoom.
+
 ## Pace (0.2.4)
 
 - **World tempo:** every faction's expansion rate is multiplied by a tempo that rises smoothly

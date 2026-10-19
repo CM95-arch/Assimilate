@@ -23,7 +23,9 @@ const snap = (world: World, extra: Partial<{ scale: number }> = {}) => ({ world,
 describe('saves', () => {
   it('round-trips territory, factions, upgrades and energy exactly', () => {
     const w = played();
+    w.setFlag(w.player, { x: 30, y: -12 });
     const back = parse(serialize(snap(w, { scale: 2 }), 1000)).world;
+    expect(back.player.flag).toEqual({ x: 30, y: -12 });
     expect(back.audit()).toEqual([]);
     expect(back.tick).toBe(w.tick);
     expect(back.factions.size).toBe(w.factions.size);
@@ -35,6 +37,8 @@ describe('saves', () => {
       expect(g.energy).toBeCloseTo(f.energy, 6);
       expect(g.profile).toBe(f.profile);
       expect(g.stats.rate).toBeCloseTo(f.stats.rate, 9);
+      expect(g.holds).toEqual(f.holds);
+      if (!f.isPlayer) expect(g.flag).toEqual(f.flag);
     }
     w.grid.forEachOwned((x, y, o) => expect(back.grid.owner(x, y)).toBe(o));
   });

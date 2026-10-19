@@ -63,15 +63,18 @@ for (const f of w.factions.values()) {
   console.log(`${f.name.padEnd(7)} ${PROFILE_BY_ID[f.profile].name.padEnd(15)} ${f.alive ? 'alive' : 'gone '} ${String(f.cells).padStart(5)} cells | ${top}`);
 }
 
-// Map around the player: █ you, letters for rivals.
+// Map around the player: █ you, letters for rivals; ~ water, * landmark.
 const c = centroid(p);
+const GROUND = [' ', '~'];
 const glyph = (o: number) => (o === NEUTRAL ? ' ' : o === PLAYER ? '█' : String.fromCharCode(95 + o));
 const half = VIEW >> 1;
 for (let y = Math.round(c.y) - half; y < Math.round(c.y) + half; y += 2) {
   let line = '';
   for (let x = Math.round(c.x) - half; x < Math.round(c.x) + half; x++) {
     const a = w.grid.owner(x, y);
-    line += glyph(a !== NEUTRAL ? a : w.grid.owner(x, y + 1));
+    const o = a !== NEUTRAL ? a : w.grid.owner(x, y + 1);
+    const lm = w.terrain.landmarkAt(x, y) >= 0 || w.terrain.landmarkAt(x, y + 1) >= 0;
+    line += lm ? '*' : o !== NEUTRAL ? glyph(o) : GROUND[w.terrain.at(x, y)];
   }
   console.log(line);
 }

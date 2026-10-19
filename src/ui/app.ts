@@ -15,6 +15,7 @@ import { statsPanel } from './panels/stats';
 import { territoryPanel } from './panels/territory';
 import { upgradesPanel } from './panels/upgrades';
 import { PROFILE_BY_ID } from '../config/profiles';
+import { LANDMARK_TYPES } from '../sim/terrain';
 
 const PANELS: Record<string, Panel> = {
   territory: territoryPanel,
@@ -204,15 +205,21 @@ export class App {
     this.refreshHud();
   }
 
-  /** Drag to pan, pinch or scroll to zoom. Any manual move pauses following until re-centred. */
+  /**
+   * Drag to pan, pinch or scroll to zoom. Any manual move pauses following until re-centred.
+   * A quick tap that barely moves plants (or removes) your rally flag.
+   */
   private bindCameraGestures() {
     const canvas = document.getElementById('field') as HTMLCanvasElement;
     const pts = new Map<number, { x: number; y: number }>();
     let pinch = 0;
+    // The current gesture, while it can still count as a tap.
+    let tap: { id: number; x: number; y: number; t: number } | null = null;
     const cam = () => this.game.camera;
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture?.(e.pointerId);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      tap = pts.size === 1 ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() } : null;
       if (pts.size === 2) {
         const [a, b] = [...pts.values()];
         pinch = Math.hypot(a.x - b.x, a.y - b.y);
@@ -222,7 +229,8 @@ export class App {
       const prev = pts.get(e.pointerId);
       if (!prev) return;
       const pitch = cam().pitch(this.renderer.refSize);
-      if (pts.size === 1) {
+      if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 10) tap = null;
+      if (pts.size === 1 && !tap) {
         const dx = e.clientX - prev.x;
         const dy = e.clientY - prev.y;
         if (Math.abs(dx) + Math.abs(dy) > 0) cam().panBy(-dx / pitch, -dy / pitch);
@@ -241,8 +249,20 @@ export class App {
       pts.delete(e.pointerId);
       if (pts.size < 2) pinch = 0;
     };
-    canvas.addEventListener('pointerup', end);
-    canvas.addEventListener('pointercancel', end);
+    canvas.addEventListener('pointerup', (e) => {
+      const t = tap;
+      end(e);
+      tap = null;
+      if (!t || t.id !== e.pointerId || performance.now() - t.t > 500) return;
+      const at = this.renderer.screenToCell(cam(), t.x, t.y);
+      const pitch = cam().pitch(this.renderer.refSize);
+      // Within about 24 px of the flag counts as tapping the flag itself.
+      this.game.tapFlag(Math.floor(at.x), Math.floor(at.y), Math.max(1.5, 24 / pitch));
+    });
+    canvas.addEventListener('pointercancel', (e) => {
+      tap = null;
+      end(e);
+    });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const at = this.renderer.screenToCell(cam(), e.clientX, e.clientY);
@@ -270,7 +290,7 @@ export class App {
 
   showIntro() {
     if (this.game.settings.introSeen) return;
-    this.tip.show('You are black. Your territory expands on its own, and so do your rivals. Spend energy on Upgrades to make it stronger, and use the sliders in Territory to decide what it goes after.', () => {
+    this.tip.show('You are black. Your territory expands on its own, and so do your rivals. Tap the map to plant your flag and your territory leans that way. Gold symbols are landmarks worth holding. Spend energy on Upgrades to get stronger.', () => {
       this.game.settings.introSeen = true;
       this.hooks.save();
     });
@@ -329,6 +349,24 @@ export class App {
       case 'defeat':
         this.onDefeat();
         break;
+      case 'landmark': {
+        const l = LANDMARK_TYPES[e.landmark];
+        if (e.gained) this.toasts.show(`Captured ${l.name}: ${l.bonus}`, 'good');
+        else this.toasts.show(`Lost ${l.name}${e.other ? ` to ${w.factions.get(e.other)?.name ?? 'a rival'}` : ''}`, 'bad');
+        break;
+      }
+      case 'flag-reached':
+        this.toasts.show('Flag reached. Tap the map to plant it again');
+        break;
+      case 'flag': {
+        if (e.action !== 'planted') {
+          this.toasts.show(e.action === 'removed' ? 'Flag removed' : 'Tap open ground or a rival to plant your flag');
+          break;
+        }
+        const lm = w.terrain.landmarkAt(e.x, e.y);
+        this.toasts.show(lm >= 0 ? `Flag planted on ${LANDMARK_TYPES[lm].name} (${LANDMARK_TYPES[lm].bonus})` : 'Flag planted: your territory leans this way');
+        break;
+      }
     }
   }
 

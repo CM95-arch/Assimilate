@@ -85,6 +85,45 @@ export const SPECIAL = {
   capitalRadius: 7,
 };
 
+/**
+ * Terrain: generated from the world seed, the same every time for a given world.
+ * Water (lakes and rivers) can't be taken or crossed; it is drawn as empty white space.
+ */
+export const TERRAIN = {
+  /** Noise thresholds: higher = rarer. */
+  lake: 0.72,
+  river: 0.014,
+  /** Rivers have crossings (fords) wherever a fine noise exceeds this. */
+  ford: 0.7,
+  /** Around your start the ground is kept clear, fading in from `safeRadius` over `safeFade` cells. */
+  safeRadius: 8,
+  safeFade: 14,
+};
+
+/** Landmarks: rare special cells that grant a bonus to whoever holds them. */
+export const LANDMARKS = {
+  /** One possible landmark per square region this many cells wide. */
+  region: 48,
+  chance: 0.5,
+  /** None this close to your start. */
+  minDistance: 16,
+  /** A held landmark cell resists this much more (worth fighting over). */
+  resist: 2.5,
+  /** Rivals aim their flag at landmarks up to this far beyond their territory. */
+  rivalReach: 45,
+  rivalThinkSeconds: 8,
+};
+
+/** Rally flag: your territory leans toward the flag while still growing everywhere. */
+export const FLAG = {
+  /** Share of border samples that come from the part of the border nearest the flag. */
+  share: 0.5,
+  /** Those samples are the nearest of this many random border cells. */
+  tournament: 6,
+  /** Preference for steps that move toward the flag (per cell closer). */
+  pull: 1.0,
+};
+
 export const COMBAT = {
   /** Scales every conversion chance, so fronts move steadily rather than flickering. */
   conversionScale: 0.75,
@@ -188,6 +227,9 @@ export const COLORS = {
   background: '#FBFBF9',
   neutral: '#EFEEEA',
   player: '#1B1B1B',
+  /** Open ground when zoomed far out (no gaps between cells), a shade off the white of water. */
+  neutralFar: '#F3F2EE',
+  landmark: '#C9962B',
   rivals: ['#E69A71', '#89AECC', '#88B69F', '#B49BCC', '#D8BE75', '#D77F78'],
   rivalNames: ['Orange', 'Blue', 'Green', 'Purple', 'Yellow', 'Red'],
 };

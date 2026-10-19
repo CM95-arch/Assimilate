@@ -21,6 +21,8 @@ interface SavedFaction {
   taste: Record<string, number>; levels: Record<string, number>; behavior: Behavior;
   energy: number; earned: number; alive: boolean; spawnedAt: number; homeX: number; homeY: number;
   claimed: number; converted: number; lost: number; peakCells: number;
+  /** Rally flag, if planted (absent in saves from before flags). */
+  flag?: { x: number; y: number } | null;
 }
 
 export interface SaveFile {
@@ -74,7 +76,7 @@ export function serialize(snap: Snapshot, now: number): string {
   const factions: SavedFaction[] = [...w.factions.values()].map((f) => ({
     id: f.id, name: f.name, color: f.color, isPlayer: f.isPlayer, profile: f.profile, taste: f.taste, levels: f.levels, behavior: f.behavior,
     energy: f.energy, earned: f.earned, alive: f.alive, spawnedAt: f.spawnedAt, homeX: f.homeX, homeY: f.homeY,
-    claimed: f.claimed, converted: f.converted, lost: f.lost, peakCells: f.peakCells,
+    claimed: f.claimed, converted: f.converted, lost: f.lost, peakCells: f.peakCells, flag: f.flag,
   }));
   const file: SaveFile = {
     version: SAVE.version,
@@ -148,6 +150,12 @@ function faction(v: unknown): Faction {
   f.converted = Math.floor(num(s.converted, 0, 0));
   f.lost = Math.floor(num(s.lost, 0, 0));
   f.peakCells = Math.floor(num(s.peakCells, 0, 0));
+  const flag = s.flag as { x?: unknown; y?: unknown } | null | undefined;
+  if (flag && typeof flag === 'object') {
+    const x = num(flag.x, NaN, -1e7, 1e7);
+    const y = num(flag.y, NaN, -1e7, 1e7);
+    if (Number.isFinite(x) && Number.isFinite(y)) f.flag = { x: Math.round(x), y: Math.round(y) };
+  }
   return f;
 }
 

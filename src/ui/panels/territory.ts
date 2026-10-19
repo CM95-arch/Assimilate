@@ -2,7 +2,9 @@
 
 import { PROFILE_BY_ID } from '../../config/profiles';
 import { UPGRADE_BY_ID } from '../../config/upgrades';
+import { COLORS } from '../../config/balance';
 import { centroid, radius, type Faction } from '../../sim/faction';
+import { LANDMARK_TYPES } from '../../sim/terrain';
 import type { World } from '../../sim/world';
 import { fmt } from '../../util/format';
 import type { Panel, UiContext } from '../context';
@@ -30,6 +32,32 @@ function youRows(w: World): [string, string, string][] {
     ['resist', 'Resistance', p.stats.resistance.toFixed(2)],
     ['energy', 'Energy income', `+${w.energyRate().toFixed(1)}/s`],
   ];
+}
+
+function flagText(w: World): string {
+  const p = w.player;
+  if (!p.flag) return 'No flag. Tap the map to plant one, and your territory leans that way while still growing everywhere.';
+  const c = centroid(p);
+  const d = Math.max(0, Math.round(Math.hypot(p.flag.x - c.x, p.flag.y - c.y) - radius(p)));
+  const lm = w.terrain.landmarkAt(p.flag.x, p.flag.y);
+  return `${lm >= 0 ? `On a ${LANDMARK_TYPES[lm].name}, ` : 'Planted '}about ${fmt(d)} cells beyond your border. Tap it on the map to take it down.`;
+}
+
+function landmarkText(w: World): string {
+  const held = w.player.holds;
+  const parts = LANDMARK_TYPES.map((t, i) => (held[i] ? `${t.name}${held[i] > 1 ? ` ×${held[i]}` : ''}: ${t.bonus}${held[i] > 1 ? ' each' : ''}` : '')).filter(Boolean);
+  return parts.length ? parts.join(' · ') : 'None yet. Gold symbols on the map are landmarks: hold one and its bonus is yours.';
+}
+
+/** What each kind of ground and each landmark symbol means. */
+function legend(): HTMLElement {
+  const sw = (color: string, label: string, text: string) =>
+    h('div', { class: 'legend-row' }, h('span', { class: 'swatch', style: `background:${color}` }), h('span', {}, h('strong', { text: label }), ` ${text}`));
+  const symbols = ['●', '▲', '◆', '✚', '■'];
+  return h('div', { class: 'legend' },
+    sw(COLORS.background, 'Empty white space', 'is water: nobody can take or cross it.'),
+    ...LANDMARK_TYPES.map((t, i) => h('div', { class: 'legend-row' }, h('span', { class: 'glyph', text: symbols[i] }), h('span', {}, h('strong', { text: t.name }), ` ${t.bonus}.`))),
+  );
 }
 
 function rivalStatus(w: World, f: Faction, contacts: number[]): string {
@@ -75,12 +103,25 @@ export const territoryPanel: Panel = {
       h('p', { class: 'section-title', text: 'Behavior' }),
       h('p', { class: 'b-intro', text: 'Free to change any time. These decide what your territory goes after; upgrades decide how strong it is.' }),
       behaviorControls(ctx),
+      h('p', { class: 'section-title', text: 'Rally flag' }),
+      h('p', { class: 'b-intro', 'data-k': 'flag', text: flagText(w) }),
+      h('div', { class: 'btn-row', style: 'margin-top:4px' }, h('button', {
+        class: 'btn', type: 'button', 'data-action': 'remove-flag', text: 'Take down flag',
+        on: { click: () => {
+          if (w.player.flag) ctx.game.world.setFlag(ctx.game.world.player, null);
+          ctx.game.audio.click();
+        } },
+      })),
+      h('p', { class: 'section-title', text: 'Landmarks held' }),
+      h('p', { class: 'b-intro', 'data-k': 'landmarks', text: landmarkText(w) }),
       h('p', { class: 'section-title', text: 'You' }),
       kv,
       h('p', { class: 'build-line', 'data-k': 'build', text: buildSummary(w.player) }),
       h('p', { class: 'section-title', text: 'Rivals' }),
       h('div', { 'data-k': 'rivals' }, rivalList(ctx)),
-      h('p', { class: 'note', style: 'margin-top:12px', text: 'Every rival has earned about as much as you and spent it on its own route. More appear as your territory reaches further out.' }),
+      h('p', { class: 'note', style: 'margin-top:12px', text: 'Every rival has earned about as much as you and spent it on its own route. Rivals aim for landmarks too. More appear as your territory reaches further out.' }),
+      h('p', { class: 'section-title', text: 'Map key' }),
+      legend(),
     );
   },
   refresh(ctx, root) {
@@ -89,6 +130,12 @@ export const territoryPanel: Panel = {
       const el = root.querySelector(`[data-k="${id}"]`);
       if (el) setText(el, value);
     }
+    const flag = root.querySelector('[data-k="flag"]');
+    if (flag) setText(flag, flagText(w));
+    const btn = root.querySelector<HTMLButtonElement>('[data-action="remove-flag"]');
+    if (btn) btn.disabled = !w.player.flag;
+    const lms = root.querySelector('[data-k="landmarks"]');
+    if (lms) setText(lms, landmarkText(w));
     const build = root.querySelector('[data-k="build"]');
     if (build) setText(build, buildSummary(w.player));
     const holder = root.querySelector<HTMLElement>('[data-k="rivals"]');

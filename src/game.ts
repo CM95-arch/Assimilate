@@ -5,6 +5,7 @@ import { AudioEngine } from './audio/audio';
 import { ANIM, CAMERA, COLORS, TIME } from './config/balance';
 import { Anims } from './render/anims';
 import { Camera } from './render/camera';
+import { groundColor } from './render/renderer';
 import { centroid } from './sim/faction';
 import { NEUTRAL } from './sim/grid';
 import { randomSeed } from './sim/rng';
@@ -16,7 +17,11 @@ export type GameEvent =
   | { type: 'spawn'; faction: number }
   | { type: 'eliminated'; faction: number; byPlayer: boolean }
   | { type: 'defeat' }
-  | { type: 'contact'; faction: number };
+  | { type: 'contact'; faction: number }
+  /** You gained or lost a landmark. */
+  | { type: 'landmark'; landmark: number; gained: boolean; other: number }
+  | { type: 'flag-reached' }
+  | { type: 'flag'; action: 'planted' | 'removed' | 'hint'; x: number; y: number };
 
 export class Game {
   world: World;
@@ -126,7 +131,7 @@ export class Game {
     for (const e of w.events) {
       switch (e.type) {
         case 'capture': {
-          const from = e.from === NEUTRAL ? '' : colorOf(e.from);
+          const from = e.from === NEUTRAL ? groundColor(w.terrain.at(e.x, e.y)) : colorOf(e.from);
           let start = now + Math.random() * span;
           // Chain links pop one after another, so a cascade reads as a wave.
           if (e.kind === 'chain') start = now + (e.link ?? 1) * ANIM.chainStepMs;
@@ -161,6 +166,13 @@ export class Game {
         case 'defeat':
           this.events.push({ type: 'defeat' });
           break;
+        case 'landmark':
+          if (e.by === PLAYER) this.events.push({ type: 'landmark', landmark: e.landmark, gained: true, other: e.from });
+          else if (e.from === PLAYER) this.events.push({ type: 'landmark', landmark: e.landmark, gained: false, other: e.by });
+          break;
+        case 'flag':
+          if (e.faction === PLAYER) this.events.push({ type: 'flag-reached' });
+          break;
       }
     }
     w.events.length = 0;
@@ -192,6 +204,29 @@ export class Game {
       this.events.push({ type: 'scale', level });
       if (level + 1 > this.stats.highestScale) this.stats.highestScale = level + 1;
     }
+  }
+
+  /**
+   * A tap on the map at cell (x, y): plant the rally flag there, or take it down if the tap is on
+   * the flag itself or on your own ground.
+   */
+  tapFlag(x: number, y: number, tolerance: number) {
+    const w = this.world;
+    const p = w.player;
+    if (!p.alive || w.ended) return;
+    const fl = p.flag;
+    if (fl && Math.hypot(fl.x - x, fl.y - y) <= tolerance) {
+      w.setFlag(p, null);
+      this.events.push({ type: 'flag', action: 'removed', x, y });
+    } else if (w.grid.owner(x, y) === PLAYER) {
+      // Your own ground is no place for a flag: tapping it takes the flag down, or explains.
+      if (fl) w.setFlag(p, null);
+      this.events.push({ type: 'flag', action: fl ? 'removed' : 'hint', x, y });
+    } else {
+      w.setFlag(p, { x, y });
+      this.events.push({ type: 'flag', action: 'planted', x, y });
+    }
+    if (this.settings.sound) this.audio.click();
   }
 
   status(): 'Expanding' | 'At war' | 'Losing ground' | 'Paused' | 'Defeated' {
