@@ -17,7 +17,7 @@ export class AudioEngine {
   /** Must be called from a user gesture (browsers block audio until then). */
   unlock() {
     if (this.ctx) {
-      if (this.ctx.state === 'suspended') void this.ctx.resume();
+      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
       return;
     }
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -47,11 +47,11 @@ export class AudioEngine {
   }
 
   suspend() {
-    if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend();
+    if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
   }
 
   resume() {
-    if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume();
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
   }
 
   private applyVolume() {
@@ -63,7 +63,16 @@ export class AudioEngine {
     return this.ctx;
   }
 
+  /** Sound is decoration: a browser that rejects any audio call must never break the game. */
   private voice(freq: number, endFreq: number, dur: number, gain: number, type: OscillatorType = 'sine', delay = 0) {
+    try {
+      this.voiceUnsafe(freq, endFreq, dur, gain, type, delay);
+    } catch (err) {
+      console.warn('Audio voice failed', err);
+    }
+  }
+
+  private voiceUnsafe(freq: number, endFreq: number, dur: number, gain: number, type: OscillatorType, delay: number) {
     const ctx = this.ready();
     if (!ctx || this.active >= this.maxVoices) return;
     const t = ctx.currentTime + delay;
@@ -111,6 +120,14 @@ export class AudioEngine {
 
   /** Gentle whoosh for a zoom-out: filtered noise sweeping downward, plus a soft chord. */
   whoosh() {
+    try {
+      this.whooshUnsafe();
+    } catch (err) {
+      console.warn('Audio whoosh failed', err);
+    }
+  }
+
+  private whooshUnsafe() {
     const ctx = this.ready();
     if (!ctx || !this.noise) return;
     const t = ctx.currentTime;

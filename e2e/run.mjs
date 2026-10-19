@@ -338,6 +338,36 @@ console.log('Assimilate e2e');
   await ctx.close();
 }
 
+// ---------- error resilience ----------
+{
+  const { ctx, page } = await newPage();
+  await page.goto(APP_URL);
+  await page.waitForTimeout(400);
+  await test('an error never freezes the game: it is shown, dismissible, and the loop keeps running', async () => {
+    const errorsBefore = consoleErrors.length;
+    await dismissTip(page);
+    // Make the next frame throw once.
+    await G(page, () => {
+      const g = window.__assimilate.game;
+      const orig = g.update.bind(g);
+      let once = true;
+      g.update = (...a) => { if (once) { once = false; throw new Error('test failure'); } return orig(...a); };
+    });
+    await page.waitForTimeout(500);
+    assert(await page.locator('.error-card').isVisible(), 'no error card');
+    assert(/test failure/.test(await text(page, '.error-card code')), 'error text missing');
+    const t0 = await G(page, () => window.__assimilate.game.sim.tick);
+    await page.waitForTimeout(600);
+    assert((await G(page, () => window.__assimilate.game.sim.tick)) > t0, 'loop stopped after the error');
+    await page.locator('#tabs [data-tab="settings"]').click();
+    assert(await page.locator('#sheet').isVisible(), 'tabs stopped working');
+    await page.locator('.error-card button:has-text("Dismiss")').click();
+    assert((await page.locator('.error-card').count()) === 0, 'error card did not dismiss');
+    consoleErrors.length = errorsBefore;
+  });
+  await ctx.close();
+}
+
 // ---------- corrupted save ----------
 {
   const { ctx, page } = await newPage();

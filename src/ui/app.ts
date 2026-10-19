@@ -6,6 +6,7 @@ import type { Renderer } from '../render/renderer';
 import { fmt, fmtPct } from '../util/format';
 import type { Panel, UiContext } from './context';
 import { h, setAttr, setText, svg } from './dom';
+import { reportError } from './errors';
 import { Banner, closeTopModal, modalOpen, openModal, Tip, Toasts } from './overlay';
 import { colonyPanel } from './panels/colony';
 import { evolutionPanel, mutationsPanel, upgradesPanel } from './panels/locked';
@@ -147,7 +148,13 @@ export class App {
   private renderPanel(tab: string) {
     const panel = PANELS[tab];
     setText(this.sheetTitle, panel.title);
-    const body = panel.render(this.ctx);
+    let body: HTMLElement;
+    try {
+      body = panel.render(this.ctx);
+    } catch (err) {
+      reportError(err, `${panel.title} panel`);
+      body = h('p', { class: 'note', text: `This panel could not be shown. Close it with ✕ and the game carries on.` });
+    }
     body.dataset.panel = tab;
     this.sheetBody.replaceChildren(body);
   }
@@ -230,7 +237,13 @@ export class App {
     if (this.refreshTimer < 0.2) return;
     this.refreshTimer = 0;
     this.refreshHud();
-    if (this.openTab) PANELS[this.openTab].refresh?.(this.ctx, this.sheetBody);
+    if (this.openTab) {
+      try {
+        PANELS[this.openTab].refresh?.(this.ctx, this.sheetBody);
+      } catch (err) {
+        reportError(err, `${PANELS[this.openTab].title} panel`);
+      }
+    }
     this.refreshDiag();
   }
 

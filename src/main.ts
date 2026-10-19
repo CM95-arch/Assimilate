@@ -7,6 +7,7 @@ import { load, save, wipe, type StorageLike } from './persist/save';
 import { Renderer } from './render/renderer';
 import { createSettings } from './state';
 import { App } from './ui/app';
+import { installGlobalHandlers, reportError } from './ui/errors';
 
 function storage(): StorageLike {
   try {
@@ -80,9 +81,12 @@ function boot() {
   let saveTimer = 0;
   let hidden = false;
   const frame = (now: number) => {
+    // Schedule the next frame first, so one failure can never freeze the game.
+    requestAnimationFrame(frame);
     const raw = (now - last) / 1000;
     last = now;
-    if (!hidden) {
+    if (hidden) return;
+    try {
       // Clamp long stalls: the colony just resumes (offline growth arrives in Phase 8).
       const dt = Math.min(0.1, raw);
       game.update(dt, now);
@@ -93,8 +97,9 @@ function boot() {
         saveTimer = 0;
         doSave();
       }
+    } catch (err) {
+      reportError(err, 'Frame');
     }
-    requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
 
@@ -120,6 +125,7 @@ function boot() {
   }
 }
 
+installGlobalHandlers();
 try {
   boot();
 } catch (err) {

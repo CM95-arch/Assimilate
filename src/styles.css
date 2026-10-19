@@ -295,3 +295,15 @@ input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; backgroun
 input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; border-radius: 50%; background: var(--ink); margin-top: -11px; border: 3px solid #fff; box-shadow: 0 0 0 1px var(--ink); }
 input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--ink); border: 3px solid #fff; box-shadow: 0 0 0 1px var(--ink); }
 input[type=range]:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.error-card {
+  position: fixed; z-index: 50; left: 12px; right: 12px; top: calc(var(--safe-t) + 12px);
+  max-width: 440px; margin: 0 auto; padding: 14px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--danger); box-shadow: 0 10px 40px rgba(0,0,0,0.18);
+  display: flex; flex-direction: column; gap: 8px; font-size: 0.86em;
+}
+.error-card strong { color: var(--danger); }
+.error-card p { margin: 0; color: var(--ink-2); }
+.error-card code { display: block; padding: 8px; border-radius: 8px; background: var(--surface-2); font-size: 0.85em; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+.error-actions { display: flex; gap: 8px; }
+.error-actions .btn { flex: 1; }

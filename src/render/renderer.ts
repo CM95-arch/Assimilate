@@ -23,7 +23,9 @@ const SOIL = Array.from({ length: COLORS.soilBuckets }, (_, k) => {
 const AGE_SHADES = 4;
 const PLAYER_SHADES = Array.from({ length: AGE_SHADES }, (_, k) => mix(COLORS.playerYoung, COLORS.player, k / (AGE_SHADES - 1)));
 
-const hasRoundRect = typeof Path2D !== 'undefined' && 'roundRect' in Path2D.prototype;
+const hasRoundRect =
+  typeof Path2D !== 'undefined' && 'roundRect' in Path2D.prototype &&
+  typeof CanvasRenderingContext2D !== 'undefined' && 'roundRect' in CanvasRenderingContext2D.prototype;
 
 export interface FrameInfo {
   /** Milliseconds spent drawing the last frame. */
