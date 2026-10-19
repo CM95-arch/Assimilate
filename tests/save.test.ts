@@ -37,8 +37,6 @@ describe('saves', () => {
       expect(g.energy).toBeCloseTo(f.energy, 6);
       expect(g.profile).toBe(f.profile);
       expect(g.stats.rate).toBeCloseTo(f.stats.rate, 9);
-      expect(g.holds).toEqual(f.holds);
-      if (!f.isPlayer) expect(g.flag).toEqual(f.flag);
     }
     w.grid.forEachOwned((x, y, o) => expect(back.grid.owner(x, y)).toBe(o));
   });

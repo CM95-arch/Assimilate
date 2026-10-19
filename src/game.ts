@@ -5,7 +5,6 @@ import { AudioEngine } from './audio/audio';
 import { ANIM, CAMERA, COLORS, TIME } from './config/balance';
 import { Anims } from './render/anims';
 import { Camera } from './render/camera';
-import { groundColor } from './render/renderer';
 import { centroid } from './sim/faction';
 import { NEUTRAL } from './sim/grid';
 import { randomSeed } from './sim/rng';
@@ -18,10 +17,8 @@ export type GameEvent =
   | { type: 'eliminated'; faction: number; byPlayer: boolean }
   | { type: 'defeat' }
   | { type: 'contact'; faction: number }
-  /** You gained or lost a landmark. */
-  | { type: 'landmark'; landmark: number; gained: boolean; other: number }
   | { type: 'flag-reached' }
-  | { type: 'flag'; action: 'planted' | 'removed' | 'hint'; x: number; y: number };
+  | { type: 'flag'; action: 'planted' | 'removed' | 'hint' };
 
 export class Game {
   world: World;
@@ -131,7 +128,7 @@ export class Game {
     for (const e of w.events) {
       switch (e.type) {
         case 'capture': {
-          const from = e.from === NEUTRAL ? groundColor(w.terrain.at(e.x, e.y)) : colorOf(e.from);
+          const from = e.from === NEUTRAL ? '' : colorOf(e.from);
           let start = now + Math.random() * span;
           // Chain links pop one after another, so a cascade reads as a wave.
           if (e.kind === 'chain') start = now + (e.link ?? 1) * ANIM.chainStepMs;
@@ -165,10 +162,6 @@ export class Game {
           break;
         case 'defeat':
           this.events.push({ type: 'defeat' });
-          break;
-        case 'landmark':
-          if (e.by === PLAYER) this.events.push({ type: 'landmark', landmark: e.landmark, gained: true, other: e.from });
-          else if (e.from === PLAYER) this.events.push({ type: 'landmark', landmark: e.landmark, gained: false, other: e.by });
           break;
         case 'flag':
           if (e.faction === PLAYER) this.events.push({ type: 'flag-reached' });
@@ -217,14 +210,14 @@ export class Game {
     const fl = p.flag;
     if (fl && Math.hypot(fl.x - x, fl.y - y) <= tolerance) {
       w.setFlag(p, null);
-      this.events.push({ type: 'flag', action: 'removed', x, y });
+      this.events.push({ type: 'flag', action: 'removed' });
     } else if (w.grid.owner(x, y) === PLAYER) {
       // Your own ground is no place for a flag: tapping it takes the flag down, or explains.
       if (fl) w.setFlag(p, null);
-      this.events.push({ type: 'flag', action: fl ? 'removed' : 'hint', x, y });
+      this.events.push({ type: 'flag', action: fl ? 'removed' : 'hint' });
     } else {
       w.setFlag(p, { x, y });
-      this.events.push({ type: 'flag', action: 'planted', x, y });
+      this.events.push({ type: 'flag', action: 'planted' });
     }
     if (this.settings.sound) this.audio.click();
   }

@@ -15,7 +15,6 @@ import { statsPanel } from './panels/stats';
 import { territoryPanel } from './panels/territory';
 import { upgradesPanel } from './panels/upgrades';
 import { PROFILE_BY_ID } from '../config/profiles';
-import { LANDMARK_TYPES } from '../sim/terrain';
 
 const PANELS: Record<string, Panel> = {
   territory: territoryPanel,
@@ -290,7 +289,7 @@ export class App {
 
   showIntro() {
     if (this.game.settings.introSeen) return;
-    this.tip.show('You are black. Your territory expands on its own, and so do your rivals. Tap the map to plant your flag and your territory leans that way. Gold symbols are landmarks worth holding. Spend energy on Upgrades to get stronger.', () => {
+    this.tip.show('You are black. Your territory expands on its own, and so do your rivals. Tap the map to plant your flag and your territory leans that way. Spend energy on Upgrades to make it stronger.', () => {
       this.game.settings.introSeen = true;
       this.hooks.save();
     });
@@ -349,24 +348,12 @@ export class App {
       case 'defeat':
         this.onDefeat();
         break;
-      case 'landmark': {
-        const l = LANDMARK_TYPES[e.landmark];
-        if (e.gained) this.toasts.show(`Captured ${l.name}: ${l.bonus}`, 'good');
-        else this.toasts.show(`Lost ${l.name}${e.other ? ` to ${w.factions.get(e.other)?.name ?? 'a rival'}` : ''}`, 'bad');
-        break;
-      }
       case 'flag-reached':
         this.toasts.show('Flag reached. Tap the map to plant it again');
         break;
-      case 'flag': {
-        if (e.action !== 'planted') {
-          this.toasts.show(e.action === 'removed' ? 'Flag removed' : 'Tap open ground or a rival to plant your flag');
-          break;
-        }
-        const lm = w.terrain.landmarkAt(e.x, e.y);
-        this.toasts.show(lm >= 0 ? `Flag planted on ${LANDMARK_TYPES[lm].name} (${LANDMARK_TYPES[lm].bonus})` : 'Flag planted: your territory leans this way');
+      case 'flag':
+        this.toasts.show(e.action === 'planted' ? 'Flag planted: your territory leans this way' : e.action === 'removed' ? 'Flag removed' : 'Tap open ground or a rival to plant your flag');
         break;
-      }
     }
   }
 

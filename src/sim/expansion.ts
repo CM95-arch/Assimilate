@@ -11,16 +11,14 @@
 //   where we are being attacked and cells we lost recently (threat, recovery) or weakly-defended,
 //   already-touched enemy cells (flanking).
 //
-// Water can't be entered, so territory flows around lakes and through river fords. A rally flag
-// makes part of every attempt start from the border nearest the
-// flag and favour steps toward it, so the territory leans that way without stopping elsewhere.
+// A rally flag makes part of every attempt start from the border nearest the flag and favour
+// steps toward it, so the territory leans that way without stopping elsewhere.
 
 import { COMBAT, FLAG } from '../config/balance';
 import type { Stats } from '../config/upgrades';
 import type { Faction } from './faction';
 import { cellKey, DX, DY, NEUTRAL, keyX, keyY, type Grid } from './grid';
 import type { Rng } from './rng';
-import { WATER, type Terrain } from './terrain';
 
 export interface Candidate {
   x: number;
@@ -41,7 +39,6 @@ export interface Context {
   cy: number;
   /** Typical radius of the faction's territory, for momentum. */
   r: number;
-  terrain: Terrain;
 }
 
 /** Preference weight for target (x, y), reached from own border cell (sx, sy). */
@@ -90,7 +87,7 @@ export function chooseTarget(c: Context, rng: Rng, out?: Candidate[]): Candidate
       const x = sx + DX[d];
       const y = sy + DY[d];
       const owner = grid.owner(x, y);
-      if (owner === f.id || c.terrain.at(x, y) === WATER) continue;
+      if (owner === f.id) continue;
       const weight = score(c, x, y, sx, sy);
       list.push({ x, y, owner, weight, sx, sy });
       total += weight;

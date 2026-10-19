@@ -1,7 +1,7 @@
 // The simulation: an infinite grid, the factions on it and a fixed tick. Pure logic,
 // deterministic per seed, no rendering. Shared by live play, tests and scripts.
 
-import { COLORS, ENERGY, LANDMARKS, RIVALS, SPECIAL, START, TEMPO, TIME } from '../config/balance';
+import { COLORS, ENERGY, RIVALS, SPECIAL, START, TEMPO, TIME } from '../config/balance';
 import { UPGRADES } from '../config/upgrades';
 import { PROFILE_BY_ID, PROFILES } from '../config/profiles';
 import { buy, isUnlocked, upgradeCost } from './economy';
@@ -9,7 +9,6 @@ import { chooseTarget, conversionChance, groupSize, type Candidate, type Context
 import { centroid, createFaction, radius, refreshStats, type Faction } from './faction';
 import { cellKey, DX, DY, Grid, keyX, keyY, NEUTRAL } from './grid';
 import { Rng } from './rng';
-import { LANDMARK_TYPES, Terrain, WATER, type Landmark } from './terrain';
 
 export const PLAYER = 1;
 
@@ -21,8 +20,6 @@ export type SimEvent =
   | { type: 'hit'; x: number; y: number; by: number; owner: number }
   | { type: 'spawn'; faction: number }
   | { type: 'eliminated'; faction: number; by: number }
-  /** A landmark changed hands (`from`/`by` may be NEUTRAL). */
-  | { type: 'landmark'; x: number; y: number; landmark: number; by: number; from: number }
   /** A faction's territory reached its rally flag (the flag is then taken down). */
   | { type: 'flag'; faction: number }
   | { type: 'defeat' };
@@ -32,8 +29,6 @@ const DT = 1 / TIME.ticksPerSecond;
 export class World {
   readonly grid = new Grid();
   readonly rng: Rng;
-  /** Ground and landmarks, generated from the seed. */
-  readonly terrain: Terrain;
   /** Bumped whenever a flag moves, so the screen knows to redraw. */
   flagVersion = 0;
   readonly factions = new Map<number, Faction>();
@@ -53,7 +48,6 @@ export class World {
 
   constructor(readonly seed: number) {
     this.rng = new Rng(seed ^ 0x9e3779b9);
-    this.terrain = new Terrain(seed);
   }
 
   get time(): number {
@@ -100,12 +94,6 @@ export class World {
       f.lost++;
       f.frontier.delete(k);
     }
-    const lm = this.terrain.landmarkAt(x, y);
-    if (lm >= 0) {
-      if (from !== NEUTRAL) this.adjustHolds(this.factions.get(from)!, lm, -1);
-      if (to !== NEUTRAL) this.adjustHolds(this.factions.get(to)!, lm, 1);
-      this.emit({ type: 'landmark', x, y, landmark: lm, by: to, from });
-    }
     if (to !== NEUTRAL) {
       const f = this.factions.get(to)!;
       f.cells++;
@@ -132,11 +120,6 @@ export class World {
         this.emit({ type: 'flag', faction: f.id });
       }
     }
-  }
-
-  private adjustHolds(f: Faction, type: number, delta: number) {
-    f.holds[type] = Math.max(0, f.holds[type] + delta);
-    refreshStats(f);
   }
 
   /** Plant (or with null, take down) a faction's rally flag. */
@@ -166,7 +149,7 @@ export class World {
       const d = this.rng.int(4);
       const nx = keyX(k) + DX[d];
       const ny = keyY(k) + DY[d];
-      if (this.grid.owner(nx, ny) === NEUTRAL && this.terrain.at(nx, ny) !== WATER) this.transfer(nx, ny, f.id);
+      if (this.grid.owner(nx, ny) === NEUTRAL) this.transfer(nx, ny, f.id);
     }
   }
 
@@ -203,8 +186,6 @@ export class World {
   /** True if a square of radius r around (x, y) is neutral and no territory lies within `gap`. */
   private siteIsClear(x: number, y: number, r: number, gap: number): boolean {
     for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (this.grid.owner(x + dx, y + dy) !== NEUTRAL) return false;
-    // Room to start on dry land.
-    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (this.terrain.at(x + dx, y + dy) === WATER) return false;
     for (const f of this.factions.values()) {
       if (!f.alive || f.cells === 0) continue;
       // Quick reject by bounding box, then an exact check on frontier cells.
@@ -341,14 +322,13 @@ export class World {
       f.budget += f.stats.rate * tempo * (1 + f.stats.sizeBonus * Math.sqrt(f.cells)) * DT;
       if (f.budget < 1) continue;
       const c = centroid(f);
-      const ctx: Context = { grid: this.grid, f, now, cx: c.x, cy: c.y, r: radius(f), terrain: this.terrain };
+      const ctx: Context = { grid: this.grid, f, now, cx: c.x, cy: c.y, r: radius(f) };
       while (f.budget >= 1 && f.alive) {
         f.budget -= 1;
         this.attempt(ctx);
       }
       if (!f.isPlayer) this.rivalShop(f);
     }
-    for (const f of order) if (!f.isPlayer && f.alive && now >= f.nextFlagThink) this.rivalFlag(f, now);
     if (this.tick % 10 === 0) for (const f of this.factions.values()) if (f.alive) this.refreshBounds(f);
     this.maybeSpawnRivals();
     this.energyLog.push(p.earned - energyBefore);
@@ -436,7 +416,6 @@ export class World {
       m *= 1 + def.stats.capital * Math.max(0, 1 - d / SPECIAL.capitalRadius);
     }
     if (att.stats.siege > 0 && this.isPocket(def, x, y)) m *= Math.max(0.2, 1 - att.stats.siege);
-    if (this.terrain.landmarkAt(x, y) >= 0) m *= LANDMARKS.resist;
     return m;
   }
 
@@ -480,7 +459,6 @@ export class World {
       const y = Math.round(sy + ay * d + (this.rng.next() - 0.5) * 2);
       let clear = true;
       for (let dy = -1; dy <= 1 && clear; dy++) for (let dx = -1; dx <= 1 && clear; dx++) if (this.grid.owner(x + dx, y + dy) !== NEUTRAL) clear = false;
-      if (this.terrain.at(x, y) === WATER) clear = false;
       if (!clear) continue;
       this.transfer(x, y, f.id);
       f.claimed++;
@@ -489,36 +467,6 @@ export class World {
       return true;
     }
     return false;
-  }
-
-  private readonly nearby: Landmark[] = [];
-
-  /** A rival aims its flag at the nearest landmark it doesn't hold, if one is within reach. */
-  private rivalFlag(f: Faction, now: number) {
-    f.nextFlagThink = now + LANDMARKS.rivalThinkSeconds * (0.8 + 0.4 * ((f.id * 0.618) % 1));
-    const reach = LANDMARKS.rivalReach;
-    const list = this.terrain.landmarksIn(f.minX - reach, f.minY - reach, f.maxX + reach, f.maxY + reach, this.nearby);
-    const c = centroid(f);
-    let best: Landmark | null = null;
-    let bestD = Infinity;
-    for (const l of list) {
-      if (this.grid.owner(l.x, l.y) === f.id) continue;
-      const d = Math.hypot(l.x - c.x, l.y - c.y);
-      if (d < bestD) {
-        bestD = d;
-        best = l;
-      }
-    }
-    const cur = f.flag;
-    if (best ? !cur || cur.x !== best.x || cur.y !== best.y : cur) this.setFlag(f, best);
-  }
-
-  /** Landmarks held by a faction, with their positions (for the Territory tab). */
-  heldLandmarks(f: Faction): Landmark[] {
-    const out: Landmark[] = [];
-    if (!f.holds.some((n) => n > 0)) return out;
-    for (const l of this.terrain.landmarksIn(f.minX, f.minY, f.maxX, f.maxY)) if (this.grid.owner(l.x, l.y) === f.id) out.push(l);
-    return out;
   }
 
   private earn(f: Faction, amount: number) {
@@ -586,13 +534,10 @@ export class World {
       f.sumX = 0;
       f.sumY = 0;
       f.frontier.clear();
-      f.holds = LANDMARK_TYPES.map(() => 0);
     }
     this.grid.forEachOwned((x, y, o) => {
       const f = this.factions.get(o);
       if (!f) return;
-      const lm = this.terrain.landmarkAt(x, y);
-      if (lm >= 0) f.holds[lm]++;
       f.cells++;
       f.sumX += x;
       f.sumY += y;
@@ -610,7 +555,6 @@ export class World {
     const problems: string[] = [];
     const counts = new Map<number, number>();
     const front = new Map<number, number>();
-    const held = new Map<string, number>();
     this.grid.forEachOwned((x, y, o) => {
       counts.set(o, (counts.get(o) ?? 0) + 1);
       const f = this.factions.get(o);
@@ -618,8 +562,6 @@ export class World {
         problems.push(`cell ${x},${y} owned by unknown faction ${o}`);
         return;
       }
-      const lm = this.terrain.landmarkAt(x, y);
-      if (lm >= 0) held.set(`${o}:${lm}`, (held.get(`${o}:${lm}`) ?? 0) + 1);
       const isF = this.grid.isFrontier(x, y, o);
       if (isF) front.set(o, (front.get(o) ?? 0) + 1);
       if (isF !== f.frontier.has(cellKey(x, y))) problems.push(`frontier mismatch at ${x},${y} for ${o}`);
@@ -627,9 +569,6 @@ export class World {
     for (const f of this.factions.values()) {
       if ((counts.get(f.id) ?? 0) !== f.cells) problems.push(`${f.name}: cells cache ${f.cells} ≠ grid ${counts.get(f.id) ?? 0}`);
       if ((front.get(f.id) ?? 0) !== f.frontier.size) problems.push(`${f.name}: frontier size ${f.frontier.size} ≠ ${front.get(f.id) ?? 0}`);
-      f.holds.forEach((n, t) => {
-        if (n !== (held.get(`${f.id}:${t}`) ?? 0)) problems.push(`${f.name}: holds ${n} of landmark ${t}, grid says ${held.get(`${f.id}:${t}`) ?? 0}`);
-      });
     }
     return problems;
   }

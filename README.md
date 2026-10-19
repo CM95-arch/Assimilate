@@ -6,12 +6,12 @@ hand. Behaviour sliders decide what your territory goes after, and energy buys u
 it stronger. Every rival plays by the same rules with its own settings and build, so each border
 becomes a different fight.
 
-**Current build: 0.3.0.** Infinite grid with lakes and rivers (drawn as empty white space),
-landmarks that give bonuses to whoever holds them, a rally flag you plant with a tap to steer your
-growth, expansion that starts at about one cell every 3 seconds and speeds up gently over 12
-minutes, energy, four behaviour sliders, 16 upgrades in four categories (including Outposts,
-Chain Reaction, Siege, Counterattack, Tribute and Capital), rivals with five personalities that
-appear as you expand and race you for landmarks, border combat, a camera you can drag and zoom,
+**Current build: 0.3.1.** Infinite blank grid, a rally flag you plant with a tap to steer your
+growth, expansion that starts at about one cell every 3
+seconds and speeds up gently over 12 minutes, energy, four behaviour sliders, 16 upgrades in
+four categories (including Outposts, Chain Reaction, Siege, Counterattack, Tribute and
+Capital), rivals
+with five personalities that appear as you expand, border combat, a camera you can drag and zoom,
 saving, statistics and settings. Prestige, offline progress and the rest of the upgrade list come
 next (see `docs/PHASE_REPORT.md`).
 
@@ -58,7 +58,7 @@ All gameplay numbers live in `src/config/`:
 - `profiles.ts`: rival personalities (slider positions and how much each type values each
   upgrade).
 
-After changing numbers, run `npm run sim` (try `SEED=3 MINUTES=10`, or `BUILD=power,resistance`; the map shows `~` water and `*` landmarks)
+After changing numbers, run `npm run sim` (try `SEED=3 MINUTES=10`, or `BUILD=power,resistance`)
 and then `npm test`.
 
 ## Project layout
@@ -70,7 +70,6 @@ src/
     grid.ts       infinite chunked grid + key sets
     faction.ts    a faction: levels → stats, energy, territory caches
     expansion.ts  the rules: target scoring and conversion chance (where emergence comes from)
-    terrain.ts    water and landmarks, generated from the world seed
     world.ts      tick loop, captures, elimination, rival spawning, rival shopping, dormancy
     economy.ts    prices, unlocks, purchases (shared by you and rivals)
     rng.ts        seeded random numbers

@@ -315,7 +315,6 @@ console.log('Assimilate e2e');
     assert(/Flag planted/.test(await page.locator('#toasts').innerText()), 'no toast');
     await page.locator('#tabs button[data-tab="territory"]').click();
     assert(/beyond your border/.test(await text(page, '[data-k="flag"]')), 'territory tab does not show the flag');
-    assert(/water/i.test(await text(page, '.legend')) && /Watchtower/.test(await text(page, '.legend')), 'map key missing');
     await page.locator('#sheet-close').click();
     await page.waitForTimeout(200);
     const spot = await G(page, (f) => { const a = window.__assimilate; return a.renderer.cellToScreen(a.game.camera, f.x, f.y); }, flag);
@@ -632,10 +631,8 @@ for (const [name, value, expect] of [
     await G(page, () => window.__assimilate.game.camera.zoomTo(4, 2.4));
     const zoom = await frames();
     console.log(`      median frame ${rest.toFixed(1)} ms at rest, ${zoom.toFixed(1)} ms while zooming`);
-    // A 3840×2160 canvas in a headless browser without a GPU. Terrain adds one textured pass that
-    // costs ~2–3 ms here (next to nothing on a real GPU), hence 25 rather than 22.
-    assert(rest < 25, `slow at rest: ${rest} ms`);
-    assert(zoom < 25, `slow while zooming: ${zoom} ms`);
+    assert(rest < 22, `slow at rest: ${rest} ms`);
+    assert(zoom < 22, `slow while zooming: ${zoom} ms`);
   });
   await ctx.close();
 }

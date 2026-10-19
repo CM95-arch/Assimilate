@@ -3,7 +3,6 @@
 
 import { ANIM, COLORS, GRID } from '../config/balance';
 import { cellKey, NEUTRAL, type Chunk } from '../sim/grid';
-import { WATER, type Landmark } from '../sim/terrain';
 import type { World } from '../sim/world';
 import type { Anims } from './anims';
 import type { Camera, Rect } from './camera';
@@ -11,14 +10,6 @@ import type { Camera, Rect } from './camera';
 const hasRoundRect =
   typeof Path2D !== 'undefined' && 'roundRect' in Path2D.prototype &&
   typeof CanvasRenderingContext2D !== 'undefined' && 'roundRect' in CanvasRenderingContext2D.prototype;
-
-/** Colour of an empty cell: open ground, or water (drawn as the white background). */
-export function groundColor(type: number): string {
-  return type === WATER ? COLORS.background : COLORS.neutral;
-}
-
-/** Terrain is cached as images of this many cells square (one pixel per cell, or per 4 far out). */
-const TERRAIN_TILE = 128;
 
 export interface FrameInfo {
   drawMs: number;
@@ -50,10 +41,6 @@ export class Renderer {
   private chunkImages = new WeakMap<Chunk, { canvas: HTMLCanvasElement; cx: CanvasRenderingContext2D; data: ImageData; px: Uint32Array; version: number }>();
   private colorCache = new Map<number, number>();
   private lastWorld: World | null = null;
-  /** Terrain images by "lod:tx:ty"; built a few per frame so a big zoom-out never stalls. */
-  private terrainTiles = new Map<string, HTMLCanvasElement>();
-  private terrainPending = false;
-  private readonly landmarkList: Landmark[] = [];
   /** What the last frame showed; an identical frame is skipped. */
   private lastSig = '';
   /** Frames actually drawn (diagnostics). */
@@ -123,128 +110,58 @@ export class Renderer {
   }
 
   /**
-   * Open ground: terrain blitted from cached images (opaque, so no separate fill is needed), then
-   * the gaps between cells cut on top: at rest by a repeating tile that is background colour
-   * except for a rounded hole (pitch is snapped to whole pixels at rest), mid-zoom by thin lines.
-   * Drawing thousands of separate rounded shapes every frame was the main cause of lag once the
-   * view zoomed out.
+   * Empty ground: one rounded block is drawn into a small tile once (pitch is snapped to whole
+   * pixels at rest), then repeated across the screen with a single fill. Drawing thousands of
+   * separate rounded shapes every frame was the main cause of lag once the view zoomed out.
    */
-  private drawGround(world: World, g: Geometry, budgetEnd: number) {
-    this.paintGround(this.ctx, world, g, this.canvas.width, this.canvas.height, budgetEnd);
-  }
-
-  /** Paint terrain and gaps into `t`. Returns false if some terrain images aren't built yet. */
-  private paintGround(t: CanvasRenderingContext2D, world: World, g: Geometry, W: number, H: number, budgetEnd: number): boolean {
-    const showPlain = g.pitch / this.dpr >= ANIM.neutralHidePx;
-    let complete = true;
-    if (world.terrain.enabled) complete = this.drawTerrain(t, world, g, W, H, budgetEnd, showPlain);
-    else {
-      t.fillStyle = showPlain ? COLORS.neutral : COLORS.neutralFar;
-      t.fillRect(0, 0, W, H);
-    }
-    if (!showPlain || g.gap <= 0) return complete;
+  private drawNeutral(g: Geometry): boolean {
+    const ctx = this.ctx;
+    if (g.pitch / this.dpr < ANIM.neutralHidePx) return false;
     if (!Number.isInteger(g.pitch)) {
-      t.fillStyle = COLORS.background;
-      const gw = Math.max(1, Math.round(g.gap));
-      for (let x = g.x0; x <= g.x1 + 1; x++) t.fillRect(Math.round(g.ox + x * g.pitch - g.gap / 2), 0, gw, H);
-      for (let y = g.y0; y <= g.y1 + 1; y++) t.fillRect(0, Math.round(g.oy + y * g.pitch - g.gap / 2), W, gw);
-      return complete;
+      // Mid-zoom the pitch is fractional and a stretched tile is slow on dense screens: draw a
+      // flat fill and cut the gaps as lines instead (square corners for the zoom's duration).
+      ctx.fillStyle = COLORS.neutral;
+      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      if (g.gap > 0) {
+        ctx.fillStyle = COLORS.background;
+        const gw = Math.max(1, Math.round(g.gap));
+        for (let x = g.x0; x <= g.x1 + 1; x++) ctx.fillRect(Math.round(g.ox + x * g.pitch - g.gap / 2), 0, gw, this.canvas.height);
+        for (let y = g.y0; y <= g.y1 + 1; y++) ctx.fillRect(0, Math.round(g.oy + y * g.pitch - g.gap / 2), this.canvas.width, gw);
+      }
+      return true;
     }
     const size = g.pitch;
-    const key = `${size}|${g.gap}|${g.radius > 0}`;
+    const key = `${size}|${g.gap > 0}|${g.radius > 0}`;
     if (key !== this.tileKey || !this.pattern) {
       this.tileKey = key;
       this.tile.width = this.tile.height = size;
-      const c = this.tile.getContext('2d')!;
-      c.clearRect(0, 0, size, size);
-      c.fillStyle = COLORS.background;
-      c.fillRect(0, 0, size, size);
-      c.globalCompositeOperation = 'destination-out';
+      const t = this.tile.getContext('2d')!;
+      t.fillStyle = COLORS.background;
+      t.fillRect(0, 0, size, size);
+      t.fillStyle = COLORS.neutral;
       const gap = g.gap;
-      c.beginPath();
-      if (g.radius > 0) c.roundRect(gap / 2, gap / 2, size - gap, size - gap, g.radius);
-      else c.rect(gap / 2, gap / 2, size - gap, size - gap);
-      c.fill();
-      c.globalCompositeOperation = 'source-over';
-      this.pattern = t.createPattern(this.tile, 'repeat');
+      t.beginPath();
+      if (g.radius > 0) t.roundRect(gap / 2, gap / 2, size - gap, size - gap, g.radius);
+      else t.rect(gap / 2, gap / 2, size - gap, size - gap);
+      t.fill();
+      this.pattern = ctx.createPattern(this.tile, 'repeat');
     }
-    if (!this.pattern) return complete;
+    if (!this.pattern) return false;
     this.pattern.setTransform(new DOMMatrix([1, 0, 0, 1, g.ox, g.oy]));
-    t.fillStyle = this.pattern;
-    t.fillRect(0, 0, W, H);
-    return complete;
-  }
-
-  /**
-   * Blit the terrain images covering the view, building missing ones until the time budget runs
-   * out (the rest follow on the next frames). Returns false if any were missing.
-   */
-  private drawTerrain(t: CanvasRenderingContext2D, world: World, g: Geometry, W: number, H: number, budgetEnd: number, showPlain: boolean): boolean {
-    // Far out, one pixel stands for 4×4 cells (sampled), so the number of images stays small.
-    const step = g.pitch < 0.5 ? 4 : 1;
-    const span = TERRAIN_TILE * step;
-    const tiles: [HTMLCanvasElement, number, number][] = [];
-    let complete = true;
-    for (let ty = Math.floor(g.y0 / span); ty <= Math.floor(g.y1 / span); ty++) {
-      for (let tx = Math.floor(g.x0 / span); tx <= Math.floor(g.x1 / span); tx++) {
-        const k = `${step}:${showPlain}:${tx}:${ty}`;
-        let img = this.terrainTiles.get(k);
-        if (!img) {
-          if (performance.now() > budgetEnd) {
-            complete = false;
-            this.terrainPending = true;
-            continue;
-          }
-          img = this.buildTerrainTile(world, tx * span, ty * span, step, showPlain);
-          if (this.terrainTiles.size > 400) this.terrainTiles.delete(this.terrainTiles.keys().next().value!);
-          this.terrainTiles.set(k, img);
-        }
-        tiles.push([img, tx, ty]);
-      }
-    }
-    // Tiles are opaque, so the plain fill is only needed under ones still being built.
-    if (!complete) {
-      t.fillStyle = showPlain ? COLORS.neutral : COLORS.neutralFar;
-      t.fillRect(0, 0, W, H);
-    }
-    t.imageSmoothingEnabled = false;
-    for (const [img, tx, ty] of tiles) {
-      const x0 = Math.round(g.ox + tx * span * g.pitch);
-      const y0 = Math.round(g.oy + ty * span * g.pitch);
-      const x1 = Math.round(g.ox + (tx + 1) * span * g.pitch);
-      const y1 = Math.round(g.oy + (ty + 1) * span * g.pitch);
-      t.drawImage(img, x0, y0, x1 - x0, y1 - y0);
-    }
-    t.imageSmoothingEnabled = true;
-    return complete;
-  }
-
-  /** One terrain image: a pixel per cell (or per `step` cells), plain ground in its own colour. */
-  private buildTerrainTile(world: World, x0: number, y0: number, step: number, showPlain: boolean): HTMLCanvasElement {
-    const N = TERRAIN_TILE;
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = N;
-    const cx = canvas.getContext('2d')!;
-    const data = cx.createImageData(N, N);
-    const px = new Uint32Array(data.data.buffer);
-    const colors = [this.packHex(showPlain ? COLORS.neutral : COLORS.neutralFar), this.packHex(COLORS.background)];
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) px[j * N + i] = colors[world.terrain.sample(x0 + i * step, y0 + j * step)];
-    cx.putImageData(data, 0, 0);
-    return canvas;
-  }
-
-  private packHex(hex: string): number {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const gr = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return ((255 << 24) | (b << 16) | (gr << 8) | r) >>> 0;
+    ctx.fillStyle = this.pattern;
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    return true;
   }
 
   /** Packed RGBA (little-endian ABGR) for a faction id, for chunk images. */
   private rgba(world: World, id: number): number {
     let v = this.colorCache.get(id);
     if (v === undefined) {
-      v = this.packHex(world.factions.get(id)?.color ?? COLORS.player);
+      const hex = world.factions.get(id)?.color ?? COLORS.player;
+      const r = parseInt(hex.slice(1, 3), 16);
+      const gr = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      v = ((255 << 24) | (b << 16) | (gr << 8) | r) >>> 0;
       this.colorCache.set(id, v);
     }
     return v;
@@ -304,18 +221,20 @@ export class Renderer {
       this.lastWorld = world;
       this.colorCache.clear();
       this.chunkImages = new WeakMap();
-      this.terrainTiles.clear();
     }
     const sig = `${world.tick}|${world.flagVersion}|${g.pitch}|${g.ox}|${g.oy}|${this.canvas.width}x${this.canvas.height}|${this.play.y}|${this.play.h}`;
-    if (sig === this.lastSig && anims.count === 0 && !this.terrainPending) return;
-    this.terrainPending = false;
+    if (sig === this.lastSig && anims.count === 0) return;
     this.lastSig = sig;
     this.frames++;
 
     const t0 = performance.now();
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    this.drawGround(world, g, t0 + 6);
+    // The ground tile already contains the background, so only clear when it isn't drawn.
+    if (!this.drawNeutral(g)) {
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    }
     const drawn = pitchCss < ANIM.bitmapBelowPx ? this.drawTerritoryImages(world, g) : this.drawTerritoryCells(world, g, anims, now);
     const bitmap = pitchCss < ANIM.bitmapBelowPx;
 
@@ -338,7 +257,7 @@ export class Renderer {
         fill(a.toColor, k);
       } else {
         // The cached image already shows the full cell; clear it first so the flinch shows.
-        if (bitmap) fill(groundColor(world.terrain.at(a.x, a.y)), 1);
+        if (bitmap) fill(COLORS.neutral, 1);
         fill(a.toColor, k);
       }
     });
@@ -356,112 +275,38 @@ export class Renderer {
     });
 
     this.drawCapitals(world, g);
-    this.drawLandmarks(world, g);
-    this.drawFlags(world, g);
+    this.drawFlag(world, g);
     this.lastDrawn = drawn;
     this.info = { drawMs: performance.now() - t0, cellsDrawn: drawn };
   }
 
-  /**
-   * Landmarks: a gold symbol (its shape says which kind) with a soft halo, kept a readable size
-   * however far out the view is. On held ground the symbol is cut out of the owner's colour.
-   */
-  private drawLandmarks(world: World, g: Geometry) {
-    if (!world.terrain.enabled) return;
-    const list = world.terrain.landmarksIn(g.x0 - 1, g.y0 - 1, g.x1 + 1, g.y1 + 1, this.landmarkList);
-    if (!list.length || list.length > 3000) return;
+  /** Your rally flag: a black pennant on a pole, outlined in white so it reads over your territory. */
+  private drawFlag(world: World, g: Geometry) {
+    const f = world.player;
+    if (!f.alive || !f.flag) return;
+    const { x, y } = f.flag;
+    if (x < g.x0 - 2 || x > g.x1 + 2 || y < g.y0 - 2 || y > g.y1 + 2) return;
     const ctx = this.ctx;
     const d = this.dpr;
-    const r = Math.max(g.pitch * 0.34, 2.6 * d);
-    const halo = new Path2D();
-    const gold = new Path2D();
-    const cut = new Path2D();
-    for (const l of list) {
-      const cx = g.ox + (l.x + 0.5) * g.pitch;
-      const cy = g.oy + (l.y + 0.5) * g.pitch;
-      halo.moveTo(cx + r * 2.4, cy);
-      halo.arc(cx, cy, r * 2.4, 0, Math.PI * 2);
-      const owned = world.grid.owner(l.x, l.y) !== NEUTRAL;
-      this.glyph(owned ? cut : gold, l.type, cx, cy, r);
-      // Held: a gold ring around the cut-out symbol, so it still reads as a landmark.
-      if (owned) {
-        gold.moveTo(cx + r * 1.55, cy);
-        gold.arc(cx, cy, r * 1.55, 0, Math.PI * 2);
-        gold.moveTo(cx + r * 1.2, cy);
-        gold.arc(cx, cy, r * 1.2, 0, Math.PI * 2, true);
-      }
-    }
-    ctx.fillStyle = COLORS.landmark;
-    ctx.globalAlpha = 0.16;
-    ctx.fill(halo);
-    ctx.globalAlpha = 1;
-    ctx.fill(gold, 'nonzero');
-    ctx.fillStyle = COLORS.background;
-    ctx.fill(cut);
-  }
-
-  /** Landmark symbols: Spring ●, Watchtower ▲, War Camp ◆, Crossroads ✚, Forge ■. */
-  private glyph(p: Path2D, type: number, cx: number, cy: number, r: number) {
-    switch (type) {
-      case 0:
-        p.moveTo(cx + r, cy);
-        p.arc(cx, cy, r, 0, Math.PI * 2);
-        break;
-      case 1:
-        p.moveTo(cx, cy - r * 1.1);
-        p.lineTo(cx + r, cy + r * 0.8);
-        p.lineTo(cx - r, cy + r * 0.8);
-        p.closePath();
-        break;
-      case 2:
-        p.moveTo(cx, cy - r * 1.15);
-        p.lineTo(cx + r * 1.15, cy);
-        p.lineTo(cx, cy + r * 1.15);
-        p.lineTo(cx - r * 1.15, cy);
-        p.closePath();
-        break;
-      case 3: {
-        const t = r * 0.38;
-        p.rect(cx - r, cy - t, r * 2, t * 2);
-        p.rect(cx - t, cy - r, t * 2, r * 2);
-        break;
-      }
-      default:
-        p.rect(cx - r * 0.85, cy - r * 0.85, r * 1.7, r * 1.7);
-    }
-  }
-
-  /** Rally flags: a pennant on a pole at the flag's cell. Yours is black; rivals' are smaller. */
-  private drawFlags(world: World, g: Geometry) {
-    const ctx = this.ctx;
-    const d = this.dpr;
-    for (const f of world.factions.values()) {
-      if (!f.alive || !f.flag) continue;
-      const { x, y } = f.flag;
-      if (x < g.x0 - 2 || x > g.x1 + 2 || y < g.y0 - 2 || y > g.y1 + 2) continue;
-      const k = f.isPlayer ? 1 : 0.7;
-      const h = Math.max(g.pitch * 1.5, 18 * d) * k;
-      const bx = g.ox + (x + 0.5) * g.pitch;
-      const by = g.oy + (y + 0.5) * g.pitch;
-      const pole = Math.max(1.5 * d, h * 0.08);
-      // A white outline keeps the flag readable over your own black territory.
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = 3 * d;
-      ctx.strokeStyle = COLORS.background;
-      const path = new Path2D();
-      path.rect(bx - pole / 2, by - h, pole, h);
-      path.moveTo(bx + pole / 2, by - h);
-      path.lineTo(bx + pole / 2 + h * 0.62, by - h * 0.78);
-      path.lineTo(bx + pole / 2, by - h * 0.56);
-      path.closePath();
-      ctx.stroke(path);
-      ctx.fillStyle = f.color;
-      ctx.fill(path);
-      // A small base dot marks the exact cell.
-      ctx.beginPath();
-      ctx.arc(bx, by, Math.max(2 * d, h * 0.1), 0, Math.PI * 2);
-      ctx.fill();
-    }
+    const h = Math.max(g.pitch * 1.5, 18 * d);
+    const bx = g.ox + (x + 0.5) * g.pitch;
+    const by = g.oy + (y + 0.5) * g.pitch;
+    const pole = Math.max(1.5 * d, h * 0.08);
+    const path = new Path2D();
+    path.rect(bx - pole / 2, by - h, pole, h);
+    path.moveTo(bx + pole / 2, by - h);
+    path.lineTo(bx + pole / 2 + h * 0.62, by - h * 0.78);
+    path.lineTo(bx + pole / 2, by - h * 0.56);
+    path.closePath();
+    // A small base dot marks the exact cell.
+    path.moveTo(bx + Math.max(2 * d, h * 0.1), by);
+    path.arc(bx, by, Math.max(2 * d, h * 0.1), 0, Math.PI * 2);
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3 * d;
+    ctx.strokeStyle = COLORS.background;
+    ctx.stroke(path);
+    ctx.fillStyle = f.color;
+    ctx.fill(path);
   }
 
   /** Capital: a small inset square marks the home cell of any faction that has the upgrade. */

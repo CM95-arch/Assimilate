@@ -3,7 +3,6 @@
 
 import { deriveStats, neutralBehavior, type Behavior, type Stats } from '../config/upgrades';
 import { KeySet } from './grid';
-import { LANDMARK_TYPES } from './terrain';
 
 export interface Faction {
   id: number;
@@ -41,12 +40,8 @@ export interface Faction {
   converted: number;
   lost: number;
   peakCells: number;
-  /** Rally flag: the territory leans toward this cell (set by you, or chosen by a rival). */
+  /** Rally flag (yours only): the territory leans toward this cell. */
   flag: { x: number; y: number } | null;
-  /** Landmarks held, by type index (LANDMARK_TYPES). Kept up to date by transfer. */
-  holds: number[];
-  /** When a rival next reconsiders where to put its flag. */
-  nextFlagThink: number;
 }
 
 export function createFaction(id: number, name: string, color: string, isPlayer: boolean, profile = '', taste: Record<string, number> = {}): Faction {
@@ -57,21 +52,12 @@ export function createFaction(id: number, name: string, color: string, isPlayer:
     cells: 0, frontier: new KeySet(), sumX: 0, sumY: 0,
     minX: 0, maxX: 0, minY: 0, maxY: 0,
     claimed: 0, converted: 0, lost: 0, peakCells: 0,
-    flag: null, holds: LANDMARK_TYPES.map(() => 0), nextFlagThink: 0,
+    flag: null,
   };
 }
 
-/** Recompute stats from upgrades, behaviour sliders and held landmarks. */
 export function refreshStats(f: Faction) {
-  const s = deriveStats(f.levels, f.behavior);
-  const [spring, tower, camp, crossroads, forge] = f.holds;
-  s.yield *= 1 + 0.25 * spring;
-  s.conquest *= 1 + 0.25 * spring;
-  s.resistance *= 1 + 0.15 * tower;
-  s.power *= 1 + 0.15 * camp;
-  s.rate *= 1 + 0.15 * crossroads;
-  s.costMult *= 0.9 ** forge;
-  f.stats = s;
+  f.stats = deriveStats(f.levels, f.behavior);
 }
 
 export function centroid(f: Faction): { x: number; y: number } {

@@ -7,8 +7,6 @@ import { createFaction, type Faction } from '../src/sim/faction';
 import { cellKey, Grid, keyX, keyY, NEUTRAL } from '../src/sim/grid';
 import { Rng } from '../src/sim/rng';
 import { PLAYER, World } from '../src/sim/world';
-import { LANDMARK_TYPES, PLAIN, Terrain, WATER } from '../src/sim/terrain';
-import { refreshStats } from '../src/sim/faction';
 
 const run = (w: World, seconds: number) => {
   for (let t = 0; t < seconds * TIME.ticksPerSecond && !w.ended; t++) w.step();
@@ -19,7 +17,6 @@ const run = (w: World, seconds: number) => {
 function lab(seed = 1): World {
   const w = new World(seed);
   w.useTempo = false;
-  w.terrain.enabled = false;
   w.factions.set(PLAYER, createFaction(PLAYER, 'You', '#000', true));
   w.counters = { rivalsCreated: 0, nextSpawnCheck: 1e12 };
   return w;
@@ -162,16 +159,11 @@ describe('combat', () => {
   });
 
   it('caches stay exact through long multi-faction battles', () => {
-    const w = run(World.create(5), 600);
+    const w = run(World.create(11), 600);
     expect(w.audit()).toEqual([]);
     let fights = 0;
-    let landmarks = 0;
-    for (const f of w.factions.values()) {
-      fights += f.converted;
-      landmarks += f.holds.reduce((a, b) => a + b, 0);
-    }
+    for (const f of w.factions.values()) fights += f.converted;
     expect(fights).toBeGreaterThan(20);
-    expect(landmarks).toBeGreaterThan(0);
   });
 
   it('a faction reduced to zero cells is eliminated and reported', () => {
@@ -261,7 +253,7 @@ describe('emergent behaviour from the behaviour sliders', () => {
       const n = 3000;
       const out: Candidate[] = [];
       for (let i = 0; i < n; i++) {
-        const t = chooseTarget({ grid: w.grid, f: w.player, now: 0, cx: -3, cy: 0, r: 7, terrain: w.terrain }, rng, out);
+        const t = chooseTarget({ grid: w.grid, f: w.player, now: 0, cx: -3, cy: 0, r: 7 }, rng, out);
         if (t && t.owner === 2) enemy++;
       }
       return enemy / n;
@@ -285,7 +277,7 @@ describe('emergent behaviour from the behaviour sliders', () => {
       let enemy = 0;
       const out: Candidate[] = [];
       for (let i = 0; i < 4000; i++) {
-        const t = chooseTarget({ grid: w.grid, f: w.player, now: 0, cx: 0, cy: -2, r: 4, terrain: w.terrain }, rng, out);
+        const t = chooseTarget({ grid: w.grid, f: w.player, now: 0, cx: 0, cy: -2, r: 4 }, rng, out);
         if (!t || t.owner !== 2) continue;
         enemy++;
         if (t.x === 0 && t.y === -1) tip++;
@@ -307,7 +299,7 @@ describe('emergent behaviour from the behaviour sliders', () => {
       let left = 0;
       const out: Candidate[] = [];
       for (let i = 0; i < 4000; i++) {
-        const t = chooseTarget({ grid: w.grid, f: w.player, now: 1, cx: 0, cy: 0, r: 4, terrain: w.terrain }, rng, out);
+        const t = chooseTarget({ grid: w.grid, f: w.player, now: 1, cx: 0, cy: 0, r: 4 }, rng, out);
         if (t && t.x <= -4) left++;
       }
       return left / 4000;
@@ -559,105 +551,15 @@ describe('caches', () => {
   });
 });
 
-describe('terrain', () => {
-  const count = (t: Terrain, x0: number, y0: number, size: number) => {
-    const n = [0, 0];
-    for (let y = y0; y < y0 + size; y++) for (let x = x0; x < x0 + size; x++) n[t.at(x, y)]++;
-    return n;
-  };
-
-  it('is the same every time for a world, and differs between worlds', () => {
-    const a = new Terrain(3);
-    const b = new Terrain(3);
-    const c = new Terrain(4);
-    let same = 0;
-    let diff = 0;
-    for (let i = 0; i < 4000; i++) {
-      const x = (i * 37) % 500 - 250;
-      const y = (i * 53) % 500 - 250;
-      if (a.at(x, y) === b.at(x, y)) same++;
-      if (a.at(x, y) !== c.at(x, y)) diff++;
-    }
-    expect(same).toBe(4000);
-    expect(diff).toBeGreaterThan(200);
-  });
-
-  it('keeps your start dry, with some lakes and rivers further out', () => {
-    for (let seed = 1; seed <= 6; seed++) {
-      const t = new Terrain(seed);
-      expect(count(t, -6, -6, 13)[WATER]).toBe(0);
-      const n = count(t, -300, -300, 600);
-      const wet = n[WATER] / (600 * 600);
-      expect(wet).toBeGreaterThan(0.04);
-      expect(wet).toBeLessThan(0.25);
-      expect(n[PLAIN]).toBeGreaterThan(n[WATER]);
-    }
-  });
-
-  it('water is never claimed', () => {
-    const w = World.create(2);
-    run(w, 600);
-    let wet = 0;
-    w.grid.forEachOwned((x, y) => {
-      if (w.terrain.at(x, y) === WATER) wet++;
-    });
-    expect(wet).toBe(0);
-    expect(w.audit()).toEqual([]);
-  });
-});
-
-describe('landmarks', () => {
-  it('are spread across the world, none at your start, never on water', () => {
-    const t = new Terrain(5);
-    const list = t.landmarksIn(-400, -400, 400, 400);
-    expect(list.length).toBeGreaterThan(100);
-    for (const l of list) {
-      expect(Math.hypot(l.x, l.y)).toBeGreaterThanOrEqual(16);
-      expect(t.at(l.x, l.y)).not.toBe(WATER);
-      expect(t.landmarkAt(l.x, l.y)).toBe(l.type);
-    }
-    expect(new Set(list.map((l) => l.type)).size).toBe(LANDMARK_TYPES.length);
-  });
-
-  it('grant their bonus while held and lose it when taken', () => {
-    const w = lab();
-    w.terrain.enabled = true;
-    const l = w.terrain.landmarksIn(-200, -200, 200, 200).find((m) => LANDMARK_TYPES[m.type].id === 'tower')!;
-    const rival = createFaction(2, 'Rival', '#f00', false, 'balanced');
-    w.factions.set(2, rival);
-    const base = w.player.stats.resistance;
-    w.transfer(l.x, l.y, PLAYER);
-    expect(w.player.holds[l.type]).toBe(1);
-    expect(w.player.stats.resistance).toBeCloseTo(base * 1.15);
-    expect(w.events.some((e) => e.type === 'landmark' && e.by === PLAYER)).toBe(true);
-    w.transfer(l.x, l.y, 2);
-    expect(w.player.holds[l.type]).toBe(0);
-    expect(rival.holds[l.type]).toBe(1);
-    expect(w.player.stats.resistance).toBeCloseTo(base);
-    // Held landmarks are fortified: much harder to convert than the ground around them.
-    expect(w.resistMult(w.player, rival, l.x, l.y)).toBeGreaterThan(2);
-    refreshStats(rival);
-    expect(w.audit()).toEqual([]);
-  });
-
-  it('rivals plant their flag on a nearby landmark', () => {
-    const w = World.create(3);
-    run(w, 30);
-    const flagged = [...w.factions.values()].filter((f) => !f.isPlayer && f.flag);
-    expect(flagged.length).toBeGreaterThan(0);
-    for (const f of flagged) expect(w.terrain.landmarkAt(f.flag!.x, f.flag!.y)).toBeGreaterThanOrEqual(0);
-  });
-});
-
 describe('rally flag', () => {
-  /** How far east the territory's centre moves in `seconds`, with or without a flag far east. */
+  /** How far the territory reaches east and west in 90 s, with or without a flag far east. */
   const drift = (flag: boolean, seed: number) => {
     const w = lab(seed);
     for (let y = -2; y <= 2; y++) for (let x = -2; x <= 2; x++) w.transfer(x, y, PLAYER);
     grantLevels(w.player, { rate: 12 });
     if (flag) w.setFlag(w.player, { x: 200, y: 0 });
     run(w, 90);
-    return { east: w.player.maxX, west: -w.player.minX, cells: w.player.cells, w };
+    return { east: w.player.maxX, west: -w.player.minX, cells: w.player.cells };
   };
 
   it('makes the territory lean toward it while still growing elsewhere', () => {
