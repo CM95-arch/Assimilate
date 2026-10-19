@@ -3,7 +3,7 @@
 
 import { deriveStats, neutralBehavior, type Behavior, type Stats } from '../config/upgrades';
 import { KeySet } from './grid';
-import type { VeinNet } from './veins';
+import type { BoostZone, Pulse } from './veins';
 
 export interface Faction {
   id: number;
@@ -43,9 +43,10 @@ export interface Faction {
   converted: number;
   lost: number;
   peakCells: number;
-  /** Supply network (Veins upgrade); derived, recomputed every few seconds, not saved. */
-  veins: VeinNet | null;
-  nextVeinAt: number;
+  /** Veins upgrade: the pulse in flight, boost zones it left, and when the next one goes. Not saved. */
+  pulse: Pulse | null;
+  zones: BoostZone[];
+  nextPulseAt: number;
 }
 
 export function createFaction(id: number, name: string, color: string, isPlayer: boolean, profile = '', taste: Record<string, number> = {}): Faction {
@@ -56,7 +57,7 @@ export function createFaction(id: number, name: string, color: string, isPlayer:
     cells: 0, frontier: new KeySet(), blockStats: new Map(), sumX: 0, sumY: 0,
     minX: 0, maxX: 0, minY: 0, maxY: 0,
     claimed: 0, converted: 0, lost: 0, peakCells: 0,
-    veins: null, nextVeinAt: 0,
+    pulse: null, zones: [], nextPulseAt: 0,
   };
 }
 

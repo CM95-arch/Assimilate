@@ -161,6 +161,9 @@ export class Game {
         case 'defeat':
           this.events.push({ type: 'defeat' });
           break;
+        case 'pulse':
+          if (e.faction === PLAYER && this.settings.sound) this.audio.pulse();
+          break;
       }
     }
     w.events.length = 0;
@@ -192,6 +195,11 @@ export class Game {
       this.events.push({ type: 'scale', level });
       if (level + 1 > this.stats.highestScale) this.stats.highestScale = level + 1;
     }
+  }
+
+  /** Simulation time including the fraction of a tick elapsed, for smooth effects between ticks. */
+  simTime(): number {
+    return this.world.time + (this.paused || this.world.ended ? 0 : this.acc / TIME.ticksPerSecond);
   }
 
   status(): 'Expanding' | 'At war' | 'Losing ground' | 'Paused' | 'Defeated' {

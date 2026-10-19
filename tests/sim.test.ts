@@ -6,7 +6,8 @@ import { chooseTarget, conversionChance, type Candidate } from '../src/sim/expan
 import { createFaction, type Faction } from '../src/sim/faction';
 import { cellKey, Grid, keyX, keyY, NEUTRAL } from '../src/sim/grid';
 import { Rng } from '../src/sim/rng';
-import { computeVeins, onVein } from '../src/sim/veins';
+import { distanceField, launchPulse, pulseMult, weakSpots } from '../src/sim/veins';
+import { SPECIAL } from '../src/config/balance';
 import { PLAYER, World } from '../src/sim/world';
 
 const run = (w: World, seconds: number) => {
@@ -544,56 +545,72 @@ describe('special upgrades', () => {
   });
 });
 
-describe('veins', () => {
-  /** A 40×12 strip of ours with the enemy along its right edge; home on the far left. */
+describe('veins (pulses)', () => {
+  /** A 48×32 block of ours with the enemy along its right edge; capital on the far left. */
   const strip = () => {
     const w = lab(8);
     const rival = createFaction(2, 'Rival', '#f00', false, 'balanced');
     w.factions.set(2, rival);
-    for (let y = 0; y < 12; y++) for (let x = 0; x < 48; x++) w.transfer(x, y, x < 40 ? PLAYER : 2);
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 56; x++) w.transfer(x, y, x < 48 ? PLAYER : 2);
     w.player.homeX = 2;
-    w.player.homeY = 6;
-    grantLevels(w.player, { veins: 5 });
+    w.player.homeY = 16;
+    grantLevels(w.player, { veins: 8 });
     return { w, rival };
   };
 
-  it('build a network from the capital to the front', () => {
+  it('measure distance along the territory from the capital', () => {
     const { w } = strip();
-    w.player.veins = computeVeins(w.grid, w.player);
-    const net = w.player.veins;
-    expect(net.routes.length).toBeGreaterThan(0);
-    const first = net.routes[0];
-    expect(first.pts[0]).toBeLessThan(8);
-    expect(first.pts[first.pts.length - 2]).toBeGreaterThan(32);
-    expect(onVein(w.player, 3, 6)).toBe(true);
-    // Drawn routes stay on our own ground.
-    for (const r of net.routes) for (let i = 0; i < r.pts.length; i += 2) expect(r.pts[i]).toBeLessThan(41);
+    const field = distanceField(w.player);
+    const at = (x: number, y: number) => field.dist.get(cellKey(Math.floor(x / field.size), Math.floor(y / field.size)));
+    expect(at(2, 16)).toBe(0);
+    expect(at(44, 16)!).toBeGreaterThan(at(20, 16)!);
+    expect(at(44, 16)!).toBeGreaterThan(35);
   });
 
-  it('cells on a vein attack and defend harder', () => {
+  it('aim at weak spots: the border under enemy pressure, far from home', () => {
+    const { w } = strip();
+    const spots = weakSpots(w.grid, w.player, distanceField(w.player), 2, new Rng(1));
+    expect(spots.length).toBe(2);
+    for (const s of spots) expect(s.x).toBeGreaterThanOrEqual(46);
+    // Kept apart, so one pulse helps different places.
+    expect(Math.hypot(spots[0].x - spots[1].x, spots[0].y - spots[1].y)).toBeGreaterThanOrEqual(SPECIAL.pulseSpread);
+  });
+
+  it('travel at a set speed and leave a temporary boost where they land', () => {
     const { w, rival } = strip();
-    w.player.veins = computeVeins(w.grid, w.player);
-    const r = w.player.veins.routes[0];
-    const ex = Math.floor(r.pts[r.pts.length - 2]);
-    const ey = Math.floor(r.pts[r.pts.length - 1]);
-    expect(w.powerMult(w.player, ex, ey)).toBeCloseTo(1.6, 5);
-    expect(w.resistMult(rival, w.player, ex, ey)).toBeCloseTo(1.6, 5);
-    expect(w.powerMult(rival, 44, 6)).toBe(1);
+    const pulse = launchPulse(w.grid, w.player, 0, new Rng(2))!;
+    expect(pulse).not.toBeNull();
+    const t = pulse.targets[0];
+    expect(t.arrive).toBeGreaterThan(35 / SPECIAL.pulseSpeed);
+    // Let the world run: it launches its own pulse and turns arrivals into boost zones.
+    let landed: { x: number; y: number } | null = null;
+    for (let i = 0; i < 120 && !landed; i++) {
+      w.step();
+      for (const e of w.events) if (e.type === 'pulse' && e.faction === PLAYER) landed = { x: e.x, y: e.y };
+      w.events.length = 0;
+    }
+    expect(landed).not.toBeNull();
+    const { x, y } = landed!;
+    expect(pulseMult(w.player, x, y, w.time)).toBeGreaterThan(1.5);
+    expect(w.powerMult(w.player, x, y)).toBeGreaterThan(1.5);
+    expect(w.resistMult(rival, w.player, x, y)).toBeGreaterThan(1.5);
+    expect(pulseMult(w.player, 20, 16, w.time)).toBe(1);
+    expect(pulseMult(w.player, x, y, w.time + SPECIAL.pulseSeconds + 1)).toBe(1);
   });
 
-  it('a cut through the territory (about a block thick) severs the fronts beyond it', () => {
+  it('cannot reach territory cut off from the capital', () => {
     const { w } = strip();
-    // Veins route over 4×4 blocks, so a cut must be roughly that thick to sever them.
-    for (let y = 0; y < 12; y++) for (let x = 17; x < 25; x++) w.transfer(x, y, 2);
-    w.player.veins = computeVeins(w.grid, w.player);
-    for (const r of w.player.veins.routes) for (let i = 0; i < r.pts.length; i += 2) expect(r.pts[i]).toBeLessThan(25);
-    expect(onVein(w.player, 36, 6)).toBe(false);
+    for (let y = 0; y < 32; y++) for (let x = 17; x < 25; x++) w.transfer(x, y, 2);
+    const field = distanceField(w.player);
+    expect(field.dist.has(cellKey(Math.floor(40 / field.size), Math.floor(16 / field.size)))).toBe(false);
+    const spots = weakSpots(w.grid, w.player, field, 3, new Rng(3));
+    for (const s of spots) expect(s.x).toBeLessThan(25);
   });
 
-  it('re-routes automatically every few seconds while the game runs', () => {
-    const { w } = strip();
-    run(w, 3);
-    expect(w.player.veins?.routes.length).toBeGreaterThan(0);
+  it('keep caches exact while running in a full game', () => {
+    const w = World.create(9);
+    grantLevels(w.player, { veins: 10, rate: 20 });
+    run(w, 120);
     expect(w.audit()).toEqual([]);
   });
 });

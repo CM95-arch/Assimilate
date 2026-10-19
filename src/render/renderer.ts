@@ -1,8 +1,9 @@
 // Canvas drawing for the infinite grid. Everything is procedural: flat rounded blocks.
 // Only chunks that hold territory are visited; open ground is drawn cheaply in bulk.
 
-import { ANIM, COLORS, GRID } from '../config/balance';
-import { cellKey, NEUTRAL, type Chunk } from '../sim/grid';
+import { ANIM, COLORS, GRID, SPECIAL } from '../config/balance';
+import { cellKey, keyX, keyY, NEUTRAL, type Chunk } from '../sim/grid';
+import { cellDistance, lowerBound } from '../sim/veins';
 import type { World } from '../sim/world';
 import type { Anims } from './anims';
 import type { Camera, Rect } from './camera';
@@ -11,17 +12,18 @@ const hasRoundRect =
   typeof Path2D !== 'undefined' && 'roundRect' in Path2D.prototype &&
   typeof CanvasRenderingContext2D !== 'undefined' && 'roundRect' in CanvasRenderingContext2D.prototype;
 
-/** Vein colours: light lines on your black territory, darker shades on pastel rivals. */
-function veinColors(hex: string, isPlayer: boolean): [string, string] {
-  if (isPlayer) return ['#6F6F6A', '#D9D8D2'];
+/** Pulse colour: a pale grey wave on your black territory, a near-white wash on pastel rivals. */
+function pulseTint(hex: string, isPlayer: boolean): string {
+  if (isPlayer) return '#B8B7B0';
   const c = [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16));
-  const shade = (f: number) => `rgb(${c.map((v) => Math.round(v * f)).join(',')})`;
-  return [shade(0.62), shade(0.4)];
+  return `rgb(${c.map((v) => Math.round(v + (255 - v) * 0.7)).join(',')})`;
 }
 
 export interface FrameInfo {
   drawMs: number;
   cellsDrawn: number;
+  /** Of drawMs, the time spent on pulse waves and boost glows. */
+  pulseMs: number;
 }
 
 export interface Geometry {
@@ -57,7 +59,7 @@ export class Renderer {
   play: Rect = { x: 0, y: 0, w: 1, h: 1 };
   /** Narrow side of the battlefield with no panel open; sets the zoom (see Camera.pitch). */
   refSize = 1;
-  info: FrameInfo = { drawMs: 0, cellsDrawn: 0 };
+  info: FrameInfo = { drawMs: 0, cellsDrawn: 0, pulseMs: 0 };
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
@@ -220,7 +222,7 @@ export class Renderer {
    * Draw a frame. Skipped entirely when nothing visible has changed since the last one (same
    * tick, same view, no effects running), which keeps an idle screen cool.
    */
-  draw(cam: Camera, world: World, anims: Anims, now: number) {
+  draw(cam: Camera, world: World, anims: Anims, now: number, simTime = world.time) {
     const g = this.geometry(cam);
     const pitchCss = g.pitch / this.dpr;
     anims.enabled = pitchCss >= ANIM.animMinPx;
@@ -231,7 +233,11 @@ export class Renderer {
       this.chunkImages = new WeakMap();
     }
     const sig = `${world.tick}|${g.pitch}|${g.ox}|${g.oy}|${this.canvas.width}x${this.canvas.height}|${this.play.y}|${this.play.h}`;
-    if (sig === this.lastSig && anims.count === 0) return;
+    // Your own pulse moves smoothly between ticks (and its arrival flashes), so those frames are
+    // always drawn. Rival pulses just advance with the game's ticks, keeping idle redraws rare.
+    const you = world.factions.get(1);
+    const pulsing = !!you && you.alive && (!!you.pulse || you.zones.some((z) => simTime - z.start < 1));
+    if (sig === this.lastSig && anims.count === 0 && !pulsing) return;
     this.lastSig = sig;
     this.frames++;
 
@@ -270,7 +276,9 @@ export class Renderer {
       }
     });
 
-    this.drawVeins(world, g);
+    const tp = performance.now();
+    this.drawPulses(world, g, simTime);
+    const pulseMs = performance.now() - tp;
 
     // Outposts: a square outline grows from the new cell and fades.
     anims.forEachRing(now, (r, t) => {
@@ -286,55 +294,127 @@ export class Renderer {
 
     this.drawCapitals(world, g);
     this.lastDrawn = drawn;
-    this.info = { drawMs: performance.now() - t0, cellsDrawn: drawn };
+    this.info = { drawMs: performance.now() - t0, cellsDrawn: drawn, pulseMs };
   }
 
   /**
-   * Veins: each faction's supply network as lines over its territory, thicker where more fronts
-   * are fed, with pulses travelling outward (moving with game time, so a still game stays still).
+   * Veins (pulses): a lighter band rolls outward from the capital through the faction's own
+   * territory, by distance along the territory, and the spots it boosts glow while boosted.
    */
-  private drawVeins(world: World, g: Geometry) {
+  private drawPulses(world: World, g: Geometry, simTime: number) {
     const ctx = this.ctx;
-    const d = this.dpr;
-    const t = world.time;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
     for (const f of world.factions.values()) {
-      const net = f.veins;
-      if (!f.alive || !net || net.routes.length === 0 || f.stats.veins <= 0) continue;
-      const [base, pulse] = veinColors(f.color, f.isPlayer);
-      const px = (v: number) => g.ox + v * g.pitch;
-      const py = (v: number) => g.oy + v * g.pitch;
-      // Width grows with how many fronts a stretch feeds, so trunks read from far away.
-      const width = (flow: number) => Math.max((1.3 + 1.2 * Math.sqrt(flow)) * d, Math.min(g.pitch * 0.5, g.pitch * 0.14 * Math.sqrt(flow)));
-      ctx.strokeStyle = base;
-      ctx.globalAlpha = 0.9;
-      for (const r of net.routes) {
-        for (let i = 0; i + 3 < r.pts.length; i += 2) {
-          ctx.lineWidth = width(r.flow[i / 2]);
-          ctx.beginPath();
-          ctx.moveTo(px(r.pts[i]), py(r.pts[i + 1]));
-          ctx.lineTo(px(r.pts[i + 2]), py(r.pts[i + 3]));
-          ctx.stroke();
+      if (!f.alive || f.stats.veins <= 0) continue;
+      const tint = pulseTint(f.color, f.isPlayer);
+      const p = f.pulse;
+      if (p) {
+        const front = (simTime - p.start) * SPECIAL.pulseSpeed;
+        const band = 14;
+        const far = g.pitch / this.dpr < ANIM.bitmapBelowPx;
+        const ALPHAS = [0.1, 0.2, 0.32, 0.46, 0.6];
+        const paths = ALPHAS.map(() => new Path2D());
+        let any = false;
+        // Only the blocks the band can touch this frame (they are sorted by distance).
+        const { keys, dists } = p.order;
+        const end = lowerBound(dists, front + p.size);
+        for (let oi = lowerBound(dists, front - band - p.size * 2); oi < end; oi++) {
+          const k = keys[oi];
+          const d = dists[oi];
+          const x0 = keyX(k) * p.size;
+          const y0 = keyY(k) * p.size;
+          if (x0 > g.x1 || x0 + p.size < g.x0 || y0 > g.y1 || y0 + p.size < g.y0) continue;
+          // Bright along the routes to the weak spots, a faint ripple everywhere else.
+          const strength = p.corridor.has(k) ? 1 : 0.32;
+          // Zoomed out, a fully held block is tinted as one rectangle (much cheaper than per cell).
+          if (far && p.size === SPECIAL.veinBlock && f.blockStats.get(k)?.[0] === p.size * p.size) {
+            const behind = front - d;
+            if (behind < 0 || behind > band) continue;
+            const edge = behind < band * 0.2 ? behind / (band * 0.2) : 1 - (behind - band * 0.2) / (band * 0.8);
+            const level = edge * strength * (1 - 0.35 * (d / Math.max(1, p.maxDist)));
+            if (level < 0.06) continue;
+            const left = Math.round(g.ox + x0 * g.pitch);
+            const top = Math.round(g.oy + y0 * g.pitch);
+            paths[Math.min(ALPHAS.length - 1, Math.floor(level * ALPHAS.length))].rect(left, top, Math.round(g.ox + (x0 + p.size) * g.pitch) - left, Math.round(g.oy + (y0 + p.size) * g.pitch) - top);
+            any = true;
+            continue;
+          }
+          const chunk = world.grid.chunks.get(cellKey(Math.floor(x0 / GRID.chunk), Math.floor(y0 / GRID.chunk)));
+          const sameChunk = p.size <= GRID.chunk && !!chunk;
+          for (let y = y0; y < y0 + p.size; y++) {
+            for (let x = x0; x < x0 + p.size; x++) {
+              // Blocks never straddle chunks at the base size, so one chunk lookup serves the block.
+              const o = sameChunk ? chunk!.owner[(y - chunk!.cy * GRID.chunk) * GRID.chunk + (x - chunk!.cx * GRID.chunk)] : world.grid.owner(x, y);
+              if (o !== f.id) continue;
+              const cd = cellDistance(p, x, y);
+              if (cd === undefined) continue;
+              const behind = front - cd;
+              if (behind < 0 || behind > band) continue;
+              // Sharp leading edge, long soft tail; a little fainter far from home.
+              const edge = behind < band * 0.2 ? behind / (band * 0.2) : 1 - (behind - band * 0.2) / (band * 0.8);
+              const level = edge * strength * (1 - 0.35 * (cd / Math.max(1, p.maxDist)));
+              const bucket = Math.min(ALPHAS.length - 1, Math.floor(level * ALPHAS.length));
+              if (level < 0.06) continue;
+              this.block(paths[bucket], g, x, y);
+              any = true;
+            }
+          }
+        }
+        if (any) {
+          ctx.fillStyle = tint;
+          paths.forEach((path, i) => {
+            ctx.globalAlpha = ALPHAS[i];
+            ctx.fill(path);
+          });
+          ctx.globalAlpha = 1;
         }
       }
-      // Pulses: bright dashes that travel along each whole route, from home out to the front.
-      ctx.strokeStyle = pulse;
-      ctx.globalAlpha = 0.95;
-      const dash = Math.max(3 * d, g.pitch * 1.6);
-      const gap = Math.max(18 * d, g.pitch * 9);
-      ctx.setLineDash([dash, gap]);
-      ctx.lineDashOffset = -((t * 0.9) % 1) * (dash + gap);
-      ctx.lineWidth = Math.max(1.2 * d, g.pitch * 0.12);
-      for (const r of net.routes) {
-        ctx.beginPath();
-        ctx.moveTo(px(r.pts[0]), py(r.pts[1]));
-        for (let i = 2; i < r.pts.length; i += 2) ctx.lineTo(px(r.pts[i]), py(r.pts[i + 1]));
-        ctx.stroke();
+      // Boosted spots: a bright flash on arrival, then a soft glow while the boost lasts.
+      for (const z of f.zones) {
+        const age = simTime - z.start;
+        if (age < 0 || simTime > z.until) continue;
+        const flash = Math.max(0, 1 - age / 0.9);
+        // A steady glow while boosted (no shimmer, so a quiet screen needn't keep redrawing).
+        const shimmer = 0.12;
+        const r = SPECIAL.pulseRadius;
+        const path = new Path2D();
+        if (!this.addOwnedCells(path, world, g, f.id, z.x - r, z.y - r, 2 * r + 1, z.x, z.y, r)) continue;
+        ctx.fillStyle = tint;
+        ctx.globalAlpha = Math.min(0.75, shimmer + 0.6 * flash);
+        ctx.fill(path);
+        ctx.globalAlpha = 1;
       }
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
     }
+  }
+
+  /**
+   * Add `owner`'s cells inside the square (x0, y0, size) to `path` (optionally only within radius r
+   * of (cx, cy)). Returns false if the square is off screen or empty.
+   */
+  private addOwnedCells(path: Path2D, world: World, g: Geometry, owner: number, x0: number, y0: number, size: number, cx?: number, cy?: number, r?: number): boolean {
+    if (x0 > g.x1 || x0 + size < g.x0 || y0 > g.y1 || y0 + size < g.y0) return false;
+    const CS = GRID.chunk;
+    let added = false;
+    // Look the chunk up once per 32-cell stretch instead of once per cell.
+    let chunk: Chunk | undefined;
+    let ccx = NaN;
+    let ccy = NaN;
+    for (let y = y0; y < y0 + size; y++) {
+      const cy0 = Math.floor(y / CS);
+      const ly = y - cy0 * CS;
+      for (let x = x0; x < x0 + size; x++) {
+        if (r !== undefined && (x - cx!) ** 2 + (y - cy!) ** 2 > r * r) continue;
+        const cx0 = Math.floor(x / CS);
+        if (cx0 !== ccx || cy0 !== ccy) {
+          ccx = cx0;
+          ccy = cy0;
+          chunk = world.grid.chunks.get(cellKey(cx0, cy0));
+        }
+        if (!chunk || chunk.owner[ly * CS + (x - cx0 * CS)] !== owner) continue;
+        this.block(path, g, x, y);
+        added = true;
+      }
+    }
+    return added;
   }
 
   /** Capital: a small inset square marks the home cell of any faction that has the upgrade. */

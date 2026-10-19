@@ -128,6 +128,12 @@ export class AudioEngine {
     this.voice(240, 150, 0.08, 0.05, 'sine');
   }
 
+  /** A low, round swell: one of your pulses reached a weak spot. */
+  pulse() {
+    this.voice(110, 165, 0.5, 0.07, 'sine');
+    this.voice(220, 330, 0.4, 0.03, 'sine', 0.04);
+  }
+
   /** Two soft rising notes: an upgrade was bought. */
   purchase() {
     this.voice(660, 680, 0.08, 0.08, 'triangle');

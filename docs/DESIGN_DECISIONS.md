@@ -76,7 +76,7 @@ A rival's sliders come from its personality plus a random ±0.3 twist each.
   attempt, so slider settings are followed more precisely).
 - **Combat:** Conversion Power; Pressure; Chain Reaction (a conversion may flip a neighbouring
   cell of the same enemy, up to 6 links, each 40% less likely, popping as a cascade); Veins
-  (see below); Siege
+  (pulses, see below); Siege
   (enemy groups under 150 cells and under half their faction lose resistance).
 - **Defense:** Resistance; Reinforcement; Entrenchment; Counterattack (a failed attack on you
   may be answered at once against the attacking cell); Capital (resistance bonus up to
@@ -88,18 +88,25 @@ The four starters are available from the first second. The rest unlock as you ea
 during the run, and rivals follow the same unlock rule. New upgrades will be chosen from the
 creative list in the phase report.
 
-## Veins (0.2.5)
+## Veins: pulses (0.2.6)
 
-A supply network drawn across the whole territory. Territory is tallied in 4×4 blocks; the
-tallies update on every capture, so nothing is rescanned. Every ~2 s (at most one faction per
-tick) the faction routes from its capital's block to up to 10 well-spread fronts (blocks whose
-border touches an enemy, or its outermost tips in peacetime). Routing is a cheapest-path search
-that prefers fully held blocks, with a fixed per-faction irregularity so routes meander. Routes
-are smoothed into curves, drawn through the middle of the faction's own cells (thicker where they
-feed more fronts), with pulses flowing outward. Cells in a vein block get +12% power and
-resistance per level. Cutting the territory re-routes the veins around the break, or cuts a
-front off. A cut needs to be roughly a block thick to sever a vein. Very large territories
-route on doubled blocks (8×8, 16×16…) so a re-route stays around 7 ms even at 500,000 cells.
+There are no lines on screen. Every 14 s at level 1, falling to 6 s at level 10, the capital sends
+a pulse through the faction's own territory. Its targets are the weak spots: border cells with
+little friendly ground around them (spread thin) and enemy ground close by or touching (being
+surrounded), favouring ones far from home. It aims at 1 spot, plus 1 more per 4 levels, kept at
+least 14 cells apart. The wave travels at 24 cells/s by distance along the territory. Distance is
+a cheapest-path search over 4×4 blocks, using per-block tallies kept current on every capture, so
+the wave flows around gaps and can't reach cut-off regions. On arrival, the spot and everything
+within 7 cells gets +(15% + 7% per level) power and resistance for 10 s.
+
+**What you see:** a soft lighter band rolls out from the capital. It is faint across the whole
+territory and brighter along the routes to the weak spots. Each spot flashes when the pulse
+arrives, then glows while boosted. Rival pulses use a pale shade of the rival's colour.
+
+**Cost control:** only your own pulses force full-frame-rate redraws, while in flight and during
+the arrival flash. Rival pulses advance with the game ticks. Each pulse keeps its blocks sorted
+by distance, so drawing only visits the band in motion. Zoomed out, fully held blocks are tinted
+as single rectangles.
 
 ## Pace (0.2.4)
 

@@ -4,7 +4,7 @@
 // another upgrade. Preferences that trade one thing for another are behaviour sliders instead
 // (see BEHAVIOR in balance.ts and Behavior below).
 
-import { BASE_STATS, BEHAVIOR } from './balance';
+import { BASE_STATS, BEHAVIOR, SPECIAL } from './balance';
 
 export type Stats = { -readonly [K in keyof typeof BASE_STATS]: number };
 
@@ -81,9 +81,9 @@ export const UPGRADES: UpgradeDef[] = [
   },
   {
     id: 'veins', name: 'Veins', category: 'combat', baseCost: 45, costGrowth: 1.7, maxLevel: 10, unlockEarned: 150,
-    blurb: 'A supply network grows from your capital to your busiest fronts. Ground on a vein attacks and holds harder. Cut it and that front weakens.',
-    apply: (s, l) => { s.veins += 0.12 * l; },
-    effect: (l) => `+${pct(0.12 * l)} power and resistance on veins`,
+    blurb: 'Your capital sends pulses through your territory to the spots spread thinnest or closest to being surrounded, boosting them when they arrive.',
+    apply: (s, l) => { s.veins += l; },
+    effect: (l) => `Pulse every ${pulseInterval(l)}s to ${pulseTargets(l)} spot${pulseTargets(l) > 1 ? 's' : ''}, +${pct(pulseBoost(l))} power & resistance there`,
   },
   {
     id: 'siege', name: 'Siege', category: 'combat', baseCost: 50, costGrowth: 1.7, maxLevel: 8, unlockEarned: 180,
@@ -151,6 +151,17 @@ export const UPGRADES: UpgradeDef[] = [
     effect: (l) => `Prices −${pct(0.04 * l)}`,
   },
 ];
+
+/** Veins (pulses) by level: seconds between pulses, weak spots reached, and the boost given. */
+export function pulseInterval(level: number): number {
+  return Math.max(SPECIAL.pulseIntervalMin, Math.round(SPECIAL.pulseInterval - SPECIAL.pulseIntervalPerLevel * (level - 1)));
+}
+export function pulseTargets(level: number): number {
+  return 1 + Math.floor(level / 4);
+}
+export function pulseBoost(level: number): number {
+  return 0.15 + 0.07 * level;
+}
 
 export const UPGRADE_BY_ID: Record<string, UpgradeDef> = Object.fromEntries(UPGRADES.map((u) => [u.id, u]));
 
