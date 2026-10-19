@@ -47,6 +47,12 @@ export const UPGRADES: UpgradeDef[] = [
     effect: (l) => `${num(BASE_STATS.rate * (1 + 0.18 * l))} attempts/s base`,
   },
   {
+    id: 'outposts', name: 'Outposts', category: 'expansion', baseCost: 45, costGrowth: 1.7, maxLevel: 10, unlockEarned: 150,
+    blurb: 'Some attempts plant a new cell a few squares beyond your border, on open ground. It grows from there.',
+    apply: (s, l) => { s.outpost += 0.015 * l; },
+    effect: (l) => `${pct(0.015 * l)} of attempts launch an outpost`,
+  },
+  {
     id: 'targeting', name: 'Coordination', category: 'expansion', baseCost: 40, costGrowth: 1.8, maxLevel: 6, unlockEarned: 120,
     blurb: 'Each attempt weighs more of your border before choosing, so your behaviour settings are followed more precisely.',
     apply: (s, l) => { s.samples += l; },
@@ -65,6 +71,19 @@ export const UPGRADES: UpgradeDef[] = [
     blurb: 'Bigger bonus for every side you already touch an enemy cell from.',
     apply: (s, l) => { s.pressure += 0.1 * l; },
     effect: (l) => `${plus(BASE_STATS.pressure + 0.1 * l)} power per touching side`,
+  },
+
+  {
+    id: 'chain', name: 'Chain Reaction', category: 'combat', baseCost: 50, costGrowth: 1.7, maxLevel: 8, unlockEarned: 150,
+    blurb: 'A conversion can instantly flip a neighbouring enemy cell too, and that one the next. Fronts can collapse in a cascade.',
+    apply: (s, l) => { s.chain += 0.06 * l; },
+    effect: (l) => `${pct(0.06 * l)} chance to chain`,
+  },
+  {
+    id: 'siege', name: 'Siege', category: 'combat', baseCost: 50, costGrowth: 1.7, maxLevel: 8, unlockEarned: 180,
+    blurb: 'Enemy pockets cut off from their main territory lose resistance. Encircle them and they crumble.',
+    apply: (s, l) => { s.siege += 0.08 * l; },
+    effect: (l) => `Cut-off enemy cells −${pct(0.08 * l)} resistance`,
   },
 
   // ---------- Defense ----------
@@ -87,6 +106,19 @@ export const UPGRADES: UpgradeDef[] = [
     effect: (l) => `Up to ${plus(0.2 * l)} resistance after ${BASE_STATS.entrenchSeconds}s`,
   },
 
+  {
+    id: 'counter', name: 'Counterattack', category: 'defense', baseCost: 40, costGrowth: 1.65, maxLevel: 8, unlockEarned: 120,
+    blurb: 'When an attack on you fails, your cell may strike straight back at the cell it came from.',
+    apply: (s, l) => { s.counter += 0.08 * l; },
+    effect: (l) => `${pct(0.08 * l)} chance to strike back`,
+  },
+  {
+    id: 'capital', name: 'Capital', category: 'defense', baseCost: 30, costGrowth: 1.6, maxLevel: 10, unlockEarned: 80,
+    blurb: 'Your starting ground becomes a hardened core. Protection is strongest at home and fades with distance.',
+    apply: (s, l) => { s.capital += 0.5 * l; },
+    effect: (l) => `Up to +${pct(0.5 * l)} resistance at home`,
+  },
+
   // ---------- Economy ----------
   {
     id: 'yield', name: 'Energy Yield', category: 'economy', baseCost: 10, costGrowth: 1.45, maxLevel: 60, unlockEarned: 0,
@@ -99,6 +131,12 @@ export const UPGRADES: UpgradeDef[] = [
     blurb: 'More energy from every enemy cell you convert.',
     apply: (s, l) => { s.conquest *= 1 + 0.35 * l; },
     effect: (l) => `${num(6 * (1 + 0.35 * l))} energy per conversion`,
+  },
+  {
+    id: 'tribute', name: 'Tribute', category: 'economy', baseCost: 30, costGrowth: 1.55, maxLevel: 30, unlockEarned: 100,
+    blurb: 'Steady energy every second for the territory you hold, even when nothing moves.',
+    apply: (s, l) => { s.tribute += 0.25 * l; },
+    effect: (l) => `+${num(0.25 * l)} energy/s per 100 cells`,
   },
   {
     id: 'efficiency', name: 'Upgrade Cost Reduction', category: 'economy', baseCost: 60, costGrowth: 2.0, maxLevel: 10, unlockEarned: 200,

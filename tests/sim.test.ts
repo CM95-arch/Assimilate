@@ -16,6 +16,7 @@ const run = (w: World, seconds: number) => {
 /** An empty world with only factions we place by hand (no automatic rivals). */
 function lab(seed = 1): World {
   const w = new World(seed);
+  w.useTempo = false;
   w.factions.set(PLAYER, createFaction(PLAYER, 'You', '#000', true));
   w.counters = { rivalsCreated: 0, nextSpawnCheck: 1e12 };
   return w;
@@ -427,5 +428,117 @@ describe('determinism', () => {
     const a = run(World.create(42), 120);
     const b = run(World.create(42), 120);
     for (const f of a.factions.values()) expect(b.factions.get(f.id)!.cells).toBe(f.cells);
+  });
+});
+
+describe('world tempo', () => {
+  it('starts at 1×, rises smoothly, and settles around 2.2× by minute 12', () => {
+    const w = new World(1);
+    const at = (s: number) => {
+      w.tick = s * TIME.ticksPerSecond;
+      return w.tempo();
+    };
+    expect(at(0)).toBe(1);
+    expect(at(60)).toBeLessThan(1.05);
+    expect(at(300)).toBeGreaterThan(1.3);
+    expect(at(300)).toBeLessThan(1.7);
+    expect(at(600)).toBeGreaterThan(1.8);
+    expect(at(720)).toBeCloseTo(2.2, 5);
+    expect(at(3600)).toBeCloseTo(2.2, 5);
+    for (let s = 0; s < 720; s += 30) expect(at(s + 30)).toBeGreaterThanOrEqual(at(s));
+  });
+});
+
+describe('special upgrades', () => {
+  const duel = (seed: number) => {
+    const w = lab(seed);
+    const rival = createFaction(2, 'Rival', '#f00', false, 'balanced');
+    w.factions.set(2, rival);
+    for (let y = -10; y <= 10; y++) for (let x = -12; x <= 12; x++) w.transfer(x, y, x < 0 ? PLAYER : 2);
+    w.player.homeX = -6;
+    rival.homeX = 6;
+    return { w, rival };
+  };
+
+  it('Outposts plant cells beyond the border that are not touching it', () => {
+    const w = lab(2);
+    w.placeCluster(w.player, 0, 0);
+    grantLevels(w.player, { outposts: 10 });
+    let outposts = 0;
+    for (let t = 0; t < 1200; t++) {
+      w.step();
+      for (const e of w.events) if (e.type === 'capture' && e.kind === 'outpost') outposts++;
+      w.events.length = 0;
+    }
+    expect(outposts).toBeGreaterThan(3);
+    expect(w.audit()).toEqual([]);
+  });
+
+  it('Chain Reaction converts extra enemy cells in cascades', () => {
+    const count = (levels: Record<string, number>) => {
+      const { w } = duel(3);
+      grantLevels(w.player, { power: 10, rate: 20, ...levels });
+      setBehavior(w.player, { focus: 1 });
+      let chains = 0;
+      for (let t = 0; t < 400; t++) {
+        w.step();
+        for (const e of w.events) if (e.type === 'capture' && e.kind === 'chain') chains++;
+        w.events.length = 0;
+      }
+      return { chains, converted: w.player.converted };
+    };
+    const without = count({});
+    const withChain = count({ chain: 8 });
+    expect(without.chains).toBe(0);
+    expect(withChain.chains).toBeGreaterThan(10);
+    expect(withChain.converted).toBeGreaterThan(without.converted);
+  });
+
+  it('Siege weakens only enemy pockets cut off from their main territory', () => {
+    const { w, rival } = duel(4);
+    // A small rival pocket deep inside our side, cut off from the main rival block.
+    for (let y = -2; y <= 0; y++) for (let x = -9; x <= -7; x++) w.transfer(x, y, 2);
+    grantLevels(w.player, { siege: 8 });
+    expect(w.isPocket(rival, -8, -1)).toBe(true);
+    expect(w.isPocket(rival, 6, 0)).toBe(false);
+    expect(w.resistMult(w.player, rival, -8, -1)).toBeLessThan(0.5);
+    expect(w.resistMult(w.player, rival, 6, 0)).toBe(1);
+  });
+
+  it('Counterattack strikes back at attackers when their attacks fail', () => {
+    const { w, rival } = duel(5);
+    grantLevels(rival, { counter: 8, resistance: 20 });
+    grantLevels(w.player, { rate: 20 });
+    setBehavior(w.player, { focus: 1 });
+    let counters = 0;
+    for (let t = 0; t < 600; t++) {
+      w.step();
+      for (const e of w.events) if (e.type === 'capture' && e.kind === 'counter') counters++;
+      w.events.length = 0;
+    }
+    expect(counters).toBeGreaterThan(3);
+  });
+
+  it('Tribute pays energy even when nothing is happening', () => {
+    const w = lab(6);
+    for (let x = 0; x < 20; x++) for (let y = 0; y < 10; y++) w.transfer(x, y, PLAYER);
+    grantLevels(w.player, { tribute: 4 });
+    w.player.stats.rate = 0;
+    const e0 = w.player.energy;
+    run(w, 10);
+    // 200 cells × 1 energy/s per 100 cells × 10 s = 20.
+    expect(w.player.energy - e0).toBeCloseTo(20, 0);
+  });
+
+  it('Capital makes home ground much harder to take, fading with distance', () => {
+    const { w, rival } = duel(7);
+    grantLevels(rival, { capital: 10 });
+    const home = w.resistMult(w.player, rival, rival.homeX, rival.homeY);
+    const near = w.resistMult(w.player, rival, rival.homeX + 3, rival.homeY);
+    const far = w.resistMult(w.player, rival, rival.homeX + 10, rival.homeY);
+    expect(home).toBeCloseTo(6, 5);
+    expect(near).toBeGreaterThan(1);
+    expect(near).toBeLessThan(home);
+    expect(far).toBe(1);
   });
 });

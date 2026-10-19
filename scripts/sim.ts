@@ -24,7 +24,7 @@ const p = w.player;
 const fmt = (s: number) => (s < 120 ? `${s.toFixed(0)}s` : `${(s / 60).toFixed(1)}m`);
 const buys: string[] = [];
 let firstContact: number | null = null;
-const marks = [10, 30, 60, 120, 180, 300, 600, 900, 1200];
+const marks = [10, 30, 60, 120, 180, 300, 420, 600, 720, 900, 1200];
 
 for (let t = 0; t < MINUTES * 60 * TIME.ticksPerSecond && !w.ended; t++) {
   w.step();

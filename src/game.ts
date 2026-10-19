@@ -2,7 +2,7 @@
 // sounds, keeps lifetime statistics and frames the camera. The rules live in src/sim.
 
 import { AudioEngine } from './audio/audio';
-import { CAMERA, TIME } from './config/balance';
+import { ANIM, CAMERA, COLORS, TIME } from './config/balance';
 import { Anims } from './render/anims';
 import { Camera } from './render/camera';
 import { centroid } from './sim/faction';
@@ -127,7 +127,11 @@ export class Game {
       switch (e.type) {
         case 'capture': {
           const from = e.from === NEUTRAL ? '' : colorOf(e.from);
-          this.anims.add({ x: e.x, y: e.y, kind: 'capture', start: now + Math.random() * span, fromColor: from || '#EFEEEA', toColor: colorOf(e.by) });
+          let start = now + Math.random() * span;
+          // Chain links pop one after another, so a cascade reads as a wave.
+          if (e.kind === 'chain') start = now + (e.link ?? 1) * ANIM.chainStepMs;
+          this.anims.add({ x: e.x, y: e.y, kind: 'capture', start, fromColor: from || COLORS.neutral, toColor: colorOf(e.by) });
+          if (e.kind === 'outpost') this.anims.addRing({ x: e.x, y: e.y, start, color: colorOf(e.by) });
           if (e.by === PLAYER) {
             if (e.from === NEUTRAL) {
               this.stats.cellsClaimed++;

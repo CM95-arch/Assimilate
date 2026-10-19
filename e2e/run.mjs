@@ -537,7 +537,8 @@ for (const [name, value, expect] of [
       const a = window.__assimilate;
       const w = a.game.world;
       for (const f of w.factions.values()) a.grant(f.id, { rate: 60, resistance: 20, power: 20 });
-      a.grant(1, { resistance: 60, power: 45, reinforcement: 20 });
+      // A player strong enough to survive, so the map keeps changing during the measurement.
+      a.grant(1, { resistance: 60, power: 60, reinforcement: 20, capital: 10, counter: 8 });
       let n = 0;
       while (a.game.camera.level < 9 && n < 30000 && !w.ended) {
         w.step();

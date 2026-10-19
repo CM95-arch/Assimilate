@@ -262,8 +262,36 @@ export class Renderer {
       }
     });
 
+    // Outposts: a square outline grows from the new cell and fades.
+    anims.forEachRing(now, (r, t) => {
+      const cx = g.ox + (r.x + 0.5) * g.pitch;
+      const cy = g.oy + (r.y + 0.5) * g.pitch;
+      const size = g.pitch * (1 + t * 3);
+      ctx.globalAlpha = (1 - t) * 0.8;
+      ctx.strokeStyle = r.color;
+      ctx.lineWidth = Math.max(1, g.pitch * 0.12);
+      ctx.strokeRect(cx - size / 2, cy - size / 2, size, size);
+      ctx.globalAlpha = 1;
+    });
+
+    this.drawCapitals(world, g);
     this.lastDrawn = drawn;
     this.info = { drawMs: performance.now() - t0, cellsDrawn: drawn };
+  }
+
+  /** Capital: a small inset square marks the home cell of any faction that has the upgrade. */
+  private drawCapitals(world: World, g: Geometry) {
+    if (g.pitch / this.dpr < ANIM.noGapBelowPx) return;
+    const ctx = this.ctx;
+    for (const f of world.factions.values()) {
+      if (!f.alive || f.stats.capital <= 0 || world.grid.owner(f.homeX, f.homeY) !== f.id) continue;
+      if (f.homeX < g.x0 || f.homeX > g.x1 || f.homeY < g.y0 || f.homeY > g.y1) continue;
+      const s = g.pitch * 0.34;
+      const cx = g.ox + (f.homeX + 0.5) * g.pitch;
+      const cy = g.oy + (f.homeY + 0.5) * g.pitch;
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(Math.round(cx - s / 2), Math.round(cy - s / 2), Math.round(s), Math.round(s));
+    }
   }
 
   /** Far view: blit each chunk's cached image (nearest-neighbour), then cut the gaps as lines. */

@@ -9,8 +9,8 @@ import type { Panel, UiContext } from '../context';
 import { behaviorControls, styleSummary } from '../behavior';
 import { h, setText } from '../dom';
 
-function attemptsPerSecond(f: Faction) {
-  return f.stats.rate * (1 + f.stats.sizeBonus * Math.sqrt(f.cells));
+function attemptsPerSecond(w: World, f: Faction) {
+  return f.stats.rate * w.tempo() * (1 + f.stats.sizeBonus * Math.sqrt(f.cells));
 }
 
 /** Short description of a faction's build: its three most-levelled upgrades. */
@@ -24,7 +24,8 @@ function youRows(w: World): [string, string, string][] {
   return [
     ['cells', 'Cells held', fmt(p.cells)],
     ['border', 'Border cells', fmt(p.frontier.size)],
-    ['attempts', 'Expansion attempts', `${attemptsPerSecond(p).toFixed(1)}/s`],
+    ['attempts', 'Expansion attempts', `${attemptsPerSecond(w, p).toFixed(1)}/s`],
+    ['tempo', 'World tempo (rises over 12 min)', `×${w.tempo().toFixed(2)}`],
     ['power', 'Conversion power', p.stats.power.toFixed(2)],
     ['resist', 'Resistance', p.stats.resistance.toFixed(2)],
     ['energy', 'Energy income', `+${w.energyRate().toFixed(1)}/s`],

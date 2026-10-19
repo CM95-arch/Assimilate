@@ -70,18 +70,28 @@ the behaviour stats.
 
 A rival's sliders come from its personality plus a random ±0.3 twist each.
 
-**Upgrades (10):**
-- **Expansion:** Expansion Rate, Coordination (more border sampled per attempt, so slider
-  settings are followed more precisely).
-- **Combat:** Conversion Power, Pressure.
-- **Defense:** Resistance, Reinforcement, Entrenchment.
-- **Economy:** Energy Yield, Conquest Bonus, Upgrade Cost Reduction.
+**Upgrades (16):**
+- **Expansion:** Expansion Rate; Outposts (some attempts plant a cell 3–5 squares beyond the
+  border, on clear open ground, with a ring effect); Coordination (more border sampled per
+  attempt, so slider settings are followed more precisely).
+- **Combat:** Conversion Power; Pressure; Chain Reaction (a conversion may flip a neighbouring
+  cell of the same enemy, up to 6 links, each 40% less likely, popping as a cascade); Siege
+  (enemy groups under 150 cells and under half their faction lose resistance).
+- **Defense:** Resistance; Reinforcement; Entrenchment; Counterattack (a failed attack on you
+  may be answered at once against the attacking cell); Capital (resistance bonus up to
+  +50% per level at home, fading to nothing 7 cells out, marked by an inset square).
+- **Economy:** Energy Yield; Conquest Bonus; Tribute (+0.25 energy/s per 100 cells per
+  level); Upgrade Cost Reduction.
 
 The four starters are available from the first second. The rest unlock as you earn energy
 during the run, and rivals follow the same unlock rule. New upgrades will be chosen from the
 creative list in the phase report.
 
-## Pace (0.2.2)
+## Pace (0.2.4)
+
+- **World tempo:** every faction's expansion rate is multiplied by a tempo that rises smoothly
+  from 1× to 2.2× over the first 12 minutes (about 1.5× at 5 minutes and 2× at 10), then holds.
+  The Territory tab shows the current value.
 
 - About one capture every 3 seconds at the start (`BASE_STATS.rate` 0.36).
 - Energy is 2 per claim and 6 per conversion, so you still get 6–7 upgrade levels in the

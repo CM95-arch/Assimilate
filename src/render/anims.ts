@@ -15,8 +15,17 @@ export interface Anim {
 
 const easeOutBack = (t: number, c1: number) => 1 + (c1 + 1) * (t - 1) ** 3 + c1 * (t - 1) ** 2;
 
+/** An expanding square outline, e.g. where an outpost lands. */
+export interface Ring {
+  x: number;
+  y: number;
+  start: number;
+  color: string;
+}
+
 export class Anims {
   private map = new Map<number, Anim>();
+  private rings: Ring[] = [];
   reduced = false;
   /** Cap so a huge battle can never flood the frame. */
   max = 600;
@@ -30,6 +39,20 @@ export class Anims {
     // A capture always replaces a flinch; a flinch never interrupts a capture.
     if (old && old.kind === 'capture' && a.kind === 'hit') return;
     this.map.set(k, a);
+  }
+
+  addRing(r: Ring) {
+    if (this.enabled && this.rings.length < 40) this.rings.push(r);
+  }
+
+  /** Rings as (cell, progress 0..1); finished ones are dropped. */
+  forEachRing(now: number, fn: (r: Ring, t: number) => void) {
+    const d = ANIM.ringMs * (this.reduced ? 0.6 : 1);
+    this.rings = this.rings.filter((r) => now < r.start + d);
+    for (const r of this.rings) {
+      const t = (now - r.start) / d;
+      if (t >= 0) fn(r, t);
+    }
   }
 
   private duration(a: Anim) {
@@ -66,10 +89,11 @@ export class Anims {
   }
 
   get count() {
-    return this.map.size;
+    return this.map.size + this.rings.length;
   }
 
   clear() {
     this.map.clear();
+    this.rings = [];
   }
 }

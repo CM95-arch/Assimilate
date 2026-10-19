@@ -14,7 +14,7 @@
 import { COMBAT } from '../config/balance';
 import type { Stats } from '../config/upgrades';
 import type { Faction } from './faction';
-import { DX, DY, NEUTRAL, keyX, keyY, type Grid } from './grid';
+import { cellKey, DX, DY, NEUTRAL, keyX, keyY, type Grid } from './grid';
 import type { Rng } from './rng';
 
 export interface Candidate {
@@ -22,6 +22,9 @@ export interface Candidate {
   y: number;
   owner: number;
   weight: number;
+  /** The attacker's own border cell this target was reached from. */
+  sx: number;
+  sy: number;
 }
 
 /** What the scorer needs to know about the attacking faction this attempt. */
@@ -80,7 +83,7 @@ export function chooseTarget(c: Context, rng: Rng, out?: Candidate[]): Candidate
       const owner = grid.owner(x, y);
       if (owner === f.id) continue;
       const weight = score(c, x, y, sx, sy);
-      list.push({ x, y, owner, weight });
+      list.push({ x, y, owner, weight, sx, sy });
       total += weight;
     }
   }
@@ -94,13 +97,35 @@ export function chooseTarget(c: Context, rng: Rng, out?: Candidate[]): Candidate
 }
 
 /**
+ * Size of the same-owner group containing (x, y), counting up to `limit` cells (flood fill stops
+ * there). Used by Siege to spot pockets cut off from the rest of their faction.
+ */
+export function groupSize(grid: Grid, x: number, y: number, owner: number, limit: number): number {
+  const seen = new Set<number>([cellKey(x, y)]);
+  const stack = [x, y];
+  while (stack.length && seen.size <= limit) {
+    const cy = stack.pop()!;
+    const cx = stack.pop()!;
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + DX[d];
+      const ny = cy + DY[d];
+      const k = cellKey(nx, ny);
+      if (seen.has(k) || grid.owner(nx, ny) !== owner) continue;
+      seen.add(k);
+      stack.push(nx, ny);
+    }
+  }
+  return seen.size;
+}
+
+/**
  * Chance that faction `att` converts the cell at (x, y) held by `def`.
  * Power and resistance are each boosted by how many sides the two sides hold around the cell,
  * and the defender's resistance grows the longer it has held the cell.
  */
-export function conversionChance(grid: Grid, a: Stats, attId: number, d: Stats, defId: number, x: number, y: number, now: number): number {
+export function conversionChance(grid: Grid, a: Stats, attId: number, d: Stats, defId: number, x: number, y: number, now: number, resistMult = 1): number {
   const attack = a.power * (1 + a.pressure * grid.sides(x, y, attId));
   const held = Math.min(1, Math.max(0, now - grid.since(x, y)) / Math.max(1, d.entrenchSeconds));
-  const defend = d.resistance * (1 + d.reinforcement * grid.sides(x, y, defId)) * (1 + d.entrench * held);
+  const defend = d.resistance * resistMult * (1 + d.reinforcement * grid.sides(x, y, defId)) * (1 + d.entrench * held);
   return COMBAT.conversionScale * (attack / (attack + defend));
 }

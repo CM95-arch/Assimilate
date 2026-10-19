@@ -54,6 +54,35 @@ export const BASE_STATS = {
   yield: 1,
   conquest: 1,
   costMult: 1,
+  /** Special upgrade effects (0 = not owned). See upgrades.ts for what each does. */
+  outpost: 0,
+  chain: 0,
+  siege: 0,
+  counter: 0,
+  tribute: 0,
+  capital: 0,
+};
+
+/**
+ * World tempo: every faction's expansion rate is multiplied by this, rising smoothly from 1× to
+ * `max`× over the first `rampSeconds`, then holding. Slow, readable opening; livelier mid-game.
+ */
+export const TEMPO = {
+  max: 2.2,
+  rampSeconds: 720,
+};
+
+/** Tuning for the special upgrades. */
+export const SPECIAL = {
+  /** Outposts land this many cells beyond the border cell they launch from. */
+  outpostDistance: [3, 5] as const,
+  /** Each further link of a chain reaction is this much less likely than the last. */
+  chainDecay: 0.6,
+  chainMaxLinks: 6,
+  /** An enemy group smaller than this, and less than half its faction, counts as cut off. */
+  siegePocketCells: 150,
+  /** Capital protection fades to nothing at this distance (cells) from home. */
+  capitalRadius: 7,
 };
 
 export const COMBAT = {
@@ -130,6 +159,9 @@ export const CAMERA = {
 /** Rendering and animation timings (milliseconds unless noted). */
 export const ANIM = {
   captureMs: 260,
+  /** Outpost landing ring, and the delay between links of a chain reaction. */
+  ringMs: 650,
+  chainStepMs: 70,
   hitMs: 220,
   captureStartScale: 0.55,
   overshoot: 2.0,

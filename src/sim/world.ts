@@ -1,19 +1,22 @@
 // The simulation: an infinite grid, the factions on it and a fixed tick. Pure logic,
 // deterministic per seed, no rendering. Shared by live play, tests and scripts.
 
-import { COLORS, ENERGY, RIVALS, START, TIME } from '../config/balance';
+import { COLORS, ENERGY, RIVALS, SPECIAL, START, TEMPO, TIME } from '../config/balance';
 import { UPGRADES } from '../config/upgrades';
 import { PROFILE_BY_ID, PROFILES } from '../config/profiles';
 import { buy, isUnlocked, upgradeCost } from './economy';
-import { chooseTarget, conversionChance, type Candidate, type Context } from './expansion';
+import { chooseTarget, conversionChance, groupSize, type Candidate, type Context } from './expansion';
 import { centroid, createFaction, radius, refreshStats, type Faction } from './faction';
 import { cellKey, DX, DY, Grid, keyX, keyY, NEUTRAL } from './grid';
 import { Rng } from './rng';
 
 export const PLAYER = 1;
 
+/** Why a capture happened, for its visual effect. */
+export type CaptureKind = 'normal' | 'outpost' | 'chain' | 'counter';
+
 export type SimEvent =
-  | { type: 'capture'; x: number; y: number; by: number; from: number }
+  | { type: 'capture'; x: number; y: number; by: number; from: number; kind?: CaptureKind; link?: number }
   | { type: 'hit'; x: number; y: number; by: number; owner: number }
   | { type: 'spawn'; faction: number }
   | { type: 'eliminated'; faction: number; by: number }
@@ -34,6 +37,10 @@ export class World {
   private nextSpawnCheck = 0;
   private rivalsCreated = 0;
   ended = false;
+  /** Tests can switch the world tempo off to measure the base rules. */
+  useTempo = true;
+  /** Siege pocket checks, memoised per tick. */
+  private pocketMemo = new Map<number, boolean>();
 
   constructor(readonly seed: number) {
     this.rng = new Rng(seed ^ 0x9e3779b9);
@@ -41,6 +48,13 @@ export class World {
 
   get time(): number {
     return this.tick * DT;
+  }
+
+  /** Expansion-rate multiplier for everyone: rises from 1× to TEMPO.max over TEMPO.rampSeconds. */
+  tempo(): number {
+    if (!this.useTempo) return 1;
+    const t = Math.min(1, this.time / TEMPO.rampSeconds);
+    return 1 + (TEMPO.max - 1) * t * t * (3 - 2 * t);
   }
 
   get player(): Faction {
@@ -283,9 +297,12 @@ export class World {
       const j = this.rng.int(i + 1);
       [order[i], order[j]] = [order[j], order[i]];
     }
+    const tempo = this.tempo();
+    this.pocketMemo.clear();
     for (const f of order) {
       if (!f.alive) continue;
-      f.budget += f.stats.rate * (1 + f.stats.sizeBonus * Math.sqrt(f.cells)) * DT;
+      if (f.stats.tribute > 0) this.earn(f, (f.stats.tribute * f.cells / 100) * DT);
+      f.budget += f.stats.rate * tempo * (1 + f.stats.sizeBonus * Math.sqrt(f.cells)) * DT;
       if (f.budget < 1) continue;
       const c = centroid(f);
       const ctx: Context = { grid: this.grid, f, now, cx: c.x, cy: c.y, r: radius(f) };
@@ -308,6 +325,7 @@ export class World {
 
   private attempt(ctx: Context) {
     const f = ctx.f;
+    if (f.stats.outpost > 0 && this.rng.next() < f.stats.outpost && this.launchOutpost(ctx)) return;
     const t = chooseTarget(ctx, this.rng, this.scratch);
     if (!t) return;
     if (t.owner === NEUTRAL) {
@@ -319,17 +337,119 @@ export class World {
       return;
     }
     const def = this.factions.get(t.owner)!;
-    const p = conversionChance(this.grid, f.stats, f.id, def.stats, def.id, t.x, t.y, ctx.now);
+    const p = conversionChance(this.grid, f.stats, f.id, def.stats, def.id, t.x, t.y, ctx.now, this.resistMult(f, def, t.x, t.y));
     this.grid.markHit(t.x, t.y, ctx.now);
     if (this.rng.next() >= p) {
       this.emit({ type: 'hit', x: t.x, y: t.y, by: f.id, owner: def.id });
+      // Counterattack: the defender may strike straight back at the cell the attack came from.
+      if (def.stats.counter > 0 && this.rng.next() < def.stats.counter && this.grid.owner(t.sx, t.sy) === f.id) {
+        this.conquer(def, f, t.sx, t.sy, ctx.now, 'counter', 0);
+      }
       return;
     }
-    this.transfer(t.x, t.y, f.id);
-    f.converted++;
-    this.earn(f, ENERGY.conquest * f.stats.conquest);
-    this.emit({ type: 'capture', x: t.x, y: t.y, by: f.id, from: def.id });
-    if (def.cells === 0) this.eliminate(def, f.id);
+    this.convert(f, def, t.x, t.y, 'normal', 0);
+    // Chain reaction: each success may flip a neighbouring cell of the same enemy, less likely each time.
+    let chance = f.stats.chain;
+    let cx = t.x;
+    let cy = t.y;
+    for (let link = 1; link <= SPECIAL.chainMaxLinks && chance > 0 && def.alive; link++) {
+      if (this.rng.next() >= chance) break;
+      const d0 = this.rng.int(4);
+      let next = -1;
+      for (let i = 0; i < 4; i++) {
+        const d = (d0 + i) % 4;
+        if (this.grid.owner(cx + DX[d], cy + DY[d]) === def.id) {
+          next = d;
+          break;
+        }
+      }
+      if (next < 0) break;
+      cx += DX[next];
+      cy += DY[next];
+      this.convert(f, def, cx, cy, 'chain', link);
+      chance *= SPECIAL.chainDecay;
+    }
+  }
+
+  /** Attempt to convert (x, y) held by `def` for `att` (used by counterattacks). */
+  private conquer(att: Faction, def: Faction, x: number, y: number, now: number, kind: CaptureKind, link: number) {
+    const p = conversionChance(this.grid, att.stats, att.id, def.stats, def.id, x, y, now, this.resistMult(att, def, x, y));
+    this.grid.markHit(x, y, now);
+    if (this.rng.next() < p) this.convert(att, def, x, y, kind, link);
+    else this.emit({ type: 'hit', x, y, by: att.id, owner: def.id });
+  }
+
+  /** Hand an enemy cell to `att`, pay the conquest reward and check for elimination. */
+  private convert(att: Faction, def: Faction, x: number, y: number, kind: CaptureKind, link: number) {
+    this.transfer(x, y, att.id);
+    att.converted++;
+    this.earn(att, ENERGY.conquest * att.stats.conquest);
+    this.emit({ type: 'capture', x, y, by: att.id, from: def.id, kind, link });
+    if (def.cells === 0 && def.alive) this.eliminate(def, att.id);
+  }
+
+  /**
+   * Resistance multiplier for `def`'s cell at (x, y) under attack from `att`:
+   * Capital hardens ground near the defender's home; Siege weakens cut-off pockets.
+   */
+  resistMult(att: Faction, def: Faction, x: number, y: number): number {
+    let m = 1;
+    if (def.stats.capital > 0) {
+      const d = Math.hypot(x - def.homeX, y - def.homeY);
+      m *= 1 + def.stats.capital * Math.max(0, 1 - d / SPECIAL.capitalRadius);
+    }
+    if (att.stats.siege > 0 && this.isPocket(def, x, y)) m *= Math.max(0.2, 1 - att.stats.siege);
+    return m;
+  }
+
+  /** True if (x, y) belongs to a small group cut off from most of its faction. */
+  isPocket(def: Faction, x: number, y: number): boolean {
+    const k = cellKey(x, y);
+    const memo = this.pocketMemo.get(k);
+    if (memo !== undefined) return memo;
+    const limit = SPECIAL.siegePocketCells;
+    const size = groupSize(this.grid, x, y, def.id, limit);
+    const pocket = size <= limit && size * 2 < def.cells;
+    this.pocketMemo.set(k, pocket);
+    return pocket;
+  }
+
+  /**
+   * Outposts: plant a cell a few squares beyond the border, on open ground with nothing around
+   * it. Returns false (and the attempt proceeds normally) if no good site was found.
+   */
+  private launchOutpost(ctx: Context): boolean {
+    const f = ctx.f;
+    if (f.frontier.size === 0) return false;
+    for (let tries = 0; tries < 3; tries++) {
+      const k = f.frontier.pick(this.rng.next());
+      const sx = keyX(k);
+      const sy = keyY(k);
+      let ax = sx - ctx.cx;
+      let ay = sy - ctx.cy;
+      const len = Math.hypot(ax, ay);
+      if (len < 0.5) {
+        const a = this.rng.next() * Math.PI * 2;
+        ax = Math.cos(a);
+        ay = Math.sin(a);
+      } else {
+        ax /= len;
+        ay /= len;
+      }
+      const [d0, d1] = SPECIAL.outpostDistance;
+      const d = d0 + this.rng.next() * (d1 - d0);
+      const x = Math.round(sx + ax * d + (this.rng.next() - 0.5) * 2);
+      const y = Math.round(sy + ay * d + (this.rng.next() - 0.5) * 2);
+      let clear = true;
+      for (let dy = -1; dy <= 1 && clear; dy++) for (let dx = -1; dx <= 1 && clear; dx++) if (this.grid.owner(x + dx, y + dy) !== NEUTRAL) clear = false;
+      if (!clear) continue;
+      this.transfer(x, y, f.id);
+      f.claimed++;
+      this.earn(f, ENERGY.neutral * f.stats.yield);
+      this.emit({ type: 'capture', x, y, by: f.id, from: NEUTRAL, kind: 'outpost' });
+      return true;
+    }
+    return false;
   }
 
   private earn(f: Faction, amount: number) {

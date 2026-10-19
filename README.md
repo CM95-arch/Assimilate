@@ -6,8 +6,9 @@ hand. Behaviour sliders decide what your territory goes after, and energy buys u
 it stronger. Every rival plays by the same rules with its own settings and build, so each border
 becomes a different fight.
 
-**Current build: 0.2.2.** Infinite grid, budget-based expansion at about one cell every 3
-seconds, energy, four behaviour sliders, 10 upgrades in four categories, rivals
+**Current build: 0.2.4.** Infinite grid, expansion that starts at about one cell every 3
+seconds and speeds up gently over 12 minutes, energy, four behaviour sliders, 16 upgrades in
+four categories (including Outposts, Chain Reaction, Siege, Counterattack, Tribute and Capital), rivals
 with five personalities that appear as you expand, border combat, a camera you can drag and zoom,
 saving, statistics and settings. Prestige, offline progress and the rest of the upgrade list come
 next (see `docs/PHASE_REPORT.md`).
