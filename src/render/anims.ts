@@ -1,61 +1,73 @@
-// Visual birth timing. The simulation creates cells on whole ticks; here each birth gets a
-// small random delay inside the tick so growth reads as continuous rather than in pulses.
+// Short visual effects keyed by cell: captures pop in over the old colour, failed attacks make
+// the defending cell flinch. Visual only; the simulation has already decided the outcome.
 
 import { ANIM } from '../config/balance';
+import { cellKey } from '../sim/grid';
 
-/** easeOutBack: overshoots slightly past 1, then settles — the "tiny elastic bounce". */
-function easeOutBack(t: number, c1: number): number {
-  const c3 = c1 + 1;
-  return 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2;
+export interface Anim {
+  x: number;
+  y: number;
+  kind: 'capture' | 'hit';
+  start: number;
+  fromColor: string;
+  toColor: string;
 }
 
-export class BirthAnims {
-  /** Visual start time per cell (ms, performance clock). 0 = not animating. */
-  private readonly start: Float64Array;
-  private list: number[] = [];
-  durationMs: number = ANIM.birthMs;
-  bounce = true;
+const easeOutBack = (t: number, c1: number) => 1 + (c1 + 1) * (t - 1) ** 3 + c1 * (t - 1) ** 2;
 
-  constructor(size: number) {
-    this.start = new Float64Array(size);
+export class Anims {
+  private map = new Map<number, Anim>();
+  reduced = false;
+  /** Cap so a huge battle can never flood the frame. */
+  max = 600;
+
+  add(a: Anim) {
+    if (this.map.size >= this.max) return;
+    const k = cellKey(a.x, a.y);
+    const old = this.map.get(k);
+    // A capture always replaces a flinch; a flinch never interrupts a capture.
+    if (old && old.kind === 'capture' && a.kind === 'hit') return;
+    this.map.set(k, a);
   }
 
-  add(cell: number, startMs: number) {
-    if (this.start[cell] === 0) this.list.push(cell);
-    this.start[cell] = startMs;
+  private duration(a: Anim) {
+    const d = a.kind === 'capture' ? ANIM.captureMs : ANIM.hitMs;
+    return this.reduced ? d * 0.5 : d;
   }
 
-  /** True while the cell should not be drawn by the static pass (not yet born, or growing). */
-  hides(cell: number, now: number): boolean {
-    const s = this.start[cell];
-    return s !== 0 && now < s + this.durationMs;
+  /** True while the static pass must skip this cell (the effect draws it instead). */
+  hides(x: number, y: number, now: number): boolean {
+    if (this.map.size === 0) return false;
+    const a = this.map.get(cellKey(x, y));
+    return !!a && now < a.start + this.duration(a);
   }
 
-  forEachActive(now: number, fn: (cell: number, scale: number) => void) {
-    let write = 0;
-    const d = this.durationMs;
-    for (let k = 0; k < this.list.length; k++) {
-      const cell = this.list[k];
-      const s = this.start[cell];
-      const t = (now - s) / d;
+  forEachActive(now: number, fn: (a: Anim, scale: number) => void) {
+    for (const [k, a] of this.map) {
+      const t = (now - a.start) / this.duration(a);
       if (t >= 1) {
-        this.start[cell] = 0;
+        this.map.delete(k);
         continue;
       }
-      this.list[write++] = cell;
-      if (t < 0) continue;
-      const e = this.bounce ? easeOutBack(t, ANIM.birthOvershoot) : t;
-      fn(cell, ANIM.birthStartScale + (1 - ANIM.birthStartScale) * e);
+      if (t < 0) {
+        fn(a, a.kind === 'capture' ? 0 : 1);
+        continue;
+      }
+      if (a.kind === 'capture') {
+        const e = this.reduced ? t : easeOutBack(t, ANIM.overshoot);
+        fn(a, ANIM.captureStartScale + (1 - ANIM.captureStartScale) * e);
+      } else {
+        // Dip then return: 1 → hitScale → 1.
+        fn(a, 1 - (1 - ANIM.hitScale) * Math.sin(Math.PI * t));
+      }
     }
-    this.list.length = write;
   }
 
-  get count(): number {
-    return this.list.length;
+  get count() {
+    return this.map.size;
   }
 
   clear() {
-    for (const c of this.list) this.start[c] = 0;
-    this.list = [];
+    this.map.clear();
   }
 }

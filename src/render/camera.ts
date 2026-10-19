@@ -1,5 +1,5 @@
-// Camera: which part of the world is on screen. Scale changes animate smoothly (§16.2);
-// zoom only changes how big cells look, never what the simulation contains (§16.4).
+// Camera: follows your territory, widens smoothly at scale milestones, and can be panned and
+// zoomed by hand. Zoom only changes how big cells look, never what the simulation contains.
 
 import { CAMERA } from '../config/balance';
 
@@ -13,55 +13,93 @@ export interface Rect {
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 
 export class Camera {
-  /** Centre of view, in world cell units (cell x+0.5 is the middle of column x). */
-  cx = 0;
-  cy = 0;
-  /** Cells visible across the narrow side of the playfield. */
-  cells: number = CAMERA.viewCells[0];
+  /** Centre of view in cell units (cell x spans x..x+1). */
+  cx = 0.5;
+  cy = 0.5;
+  /** Automatic scale level and its animated cell count across the narrow side. */
   level = 0;
-  private from = { cx: 0, cy: 0, cells: 0 };
-  private to = { cx: 0, cy: 0, cells: 0 };
+  private autoCells: number = CAMERA.viewCells[0];
+  private from = CAMERA.viewCells[0];
+  private to = CAMERA.viewCells[0];
   private t = 1;
-  /** Bumps whenever the view changes, so cached layers know to redraw. */
-  version = 0;
+  private duration = CAMERA.zoomSeconds;
+  /** Manual zoom factor (>1 = closer). */
+  manual = 1;
+  /** When false the player has panned away; the camera stops following until re-centred. */
+  follow = true;
 
-  get animating(): boolean {
+  get cells(): number {
+    return this.autoCells / this.manual;
+  }
+
+  get zooming(): boolean {
     return this.t < 1;
+  }
+
+  /** True when the view is not the automatic one (show a re-centre button). */
+  get adjusted(): boolean {
+    return !this.follow || Math.abs(this.manual - 1) > 0.02;
   }
 
   snap(level: number, cx: number, cy: number) {
     this.level = Math.max(0, Math.min(CAMERA.viewCells.length - 1, level));
-    this.cells = CAMERA.viewCells[this.level];
+    this.autoCells = this.from = this.to = CAMERA.viewCells[this.level];
+    this.t = 1;
     this.cx = cx;
     this.cy = cy;
-    this.t = 1;
-    this.version++;
   }
 
-  zoomTo(level: number, cx: number, cy: number, seconds: number = CAMERA.zoomSeconds) {
+  /** Smoothly change the automatic scale level. */
+  zoomTo(level: number, seconds: number = CAMERA.zoomSeconds) {
     this.level = Math.max(0, Math.min(CAMERA.viewCells.length - 1, level));
-    this.from = { cx: this.cx, cy: this.cy, cells: this.cells };
-    this.to = { cx, cy, cells: CAMERA.viewCells[this.level] };
-    this.t = seconds <= 0 ? 1 : 0;
-    if (this.t === 1) this.snap(this.level, cx, cy);
-    this.durationS = seconds;
+    this.from = this.autoCells;
+    this.to = CAMERA.viewCells[this.level];
+    this.duration = Math.max(0.01, seconds);
+    this.t = 0;
   }
 
-  private durationS = CAMERA.zoomSeconds;
-
-  update(dt: number) {
-    if (this.t >= 1) return;
-    this.t = Math.min(1, this.t + dt / this.durationS);
-    const k = easeInOut(this.t);
-    // Interpolate scale in log space so the zoom speed feels constant.
-    this.cells = Math.exp(Math.log(this.from.cells) + (Math.log(this.to.cells) - Math.log(this.from.cells)) * k);
-    this.cx = this.from.cx + (this.to.cx - this.from.cx) * k;
-    this.cy = this.from.cy + (this.to.cy - this.from.cy) * k;
-    this.version++;
+  /** Advance animations and, when following, drift toward (tx, ty). */
+  update(dt: number, tx: number, ty: number) {
+    if (this.t < 1) {
+      this.t = Math.min(1, this.t + dt / this.duration);
+      const k = easeInOut(this.t);
+      this.autoCells = Math.exp(Math.log(this.from) + (Math.log(this.to) - Math.log(this.from)) * k);
+    }
+    if (this.follow) {
+      const a = 1 - Math.exp(-dt * CAMERA.followRate);
+      this.cx += (tx - this.cx) * a;
+      this.cy += (ty - this.cy) * a;
+    }
   }
 
-  /** CSS pixels per cell for a playfield. */
-  pitch(play: Rect): number {
-    return Math.min(play.w, play.h) / this.cells;
+  panBy(dxCells: number, dyCells: number) {
+    this.follow = false;
+    this.cx += dxCells;
+    this.cy += dyCells;
+  }
+
+  /** Zoom by `factor` keeping the world point (wx, wy) under the same screen position. */
+  zoomAround(factor: number, wx: number, wy: number) {
+    const next = Math.min(CAMERA.manualMax, Math.max(CAMERA.manualMin, this.manual * factor));
+    // While following, zoom about the centre so the follow target stays put.
+    if (!this.follow) {
+      const k = this.manual / next;
+      this.cx = wx + (this.cx - wx) * k;
+      this.cy = wy + (this.cy - wy) * k;
+    }
+    this.manual = next;
+  }
+
+  recenter() {
+    this.follow = true;
+    this.manual = 1;
+  }
+
+  /**
+   * CSS pixels per cell. `ref` is a stable reference length (the battlefield's narrow side with
+   * no panel open), so opening a panel shortens the view instead of zooming it.
+   */
+  pitch(ref: number): number {
+    return ref / this.cells;
   }
 }

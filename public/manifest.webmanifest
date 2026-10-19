@@ -1,7 +1,7 @@
 {
   "name": "Assimilate",
   "short_name": "Assimilate",
-  "description": "One black square on a white grid. It grows by itself.",
+  "description": "An idle territory-conquest game on an endless grid.",
   "start_url": "./",
   "display": "standalone",
   "orientation": "portrait",

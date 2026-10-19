@@ -1,119 +1,74 @@
-# Phase report — build 0.1.0 (Phase 1: Living Grid)
+# Phase report — build 0.2.0 (territory redesign, first playable)
 
 ## 1. What was built
 
-- **Living grid.** A 200×320 world of pale soil blocks with small gaps and rounded corners.
-  Soil fertility varies (slightly darker means richer) and light-grey rock clusters act as
-  obstacles. Both are generated from the world seed.
-- **One black starting cell** that reproduces automatically using the local rule in
-  `src/sim/growth.ts` (see *Emergence* in `DESIGN_DECISIONS.md`).
-- **Birth animation.** Each newborn appears at half size, expands and settles with a small
-  elastic bounce. Births are spread across each tick, so growth reads as continuous. Newborns
-  start dark grey and turn black as they mature, which shows the growing front.
-- **Automatic zoom.** Seven scales, triggered at population milestones (70, 220, 650, 1.7K,
-  4.2K, 10K), or earlier if the colony nears the edge of the view. Each zoom eases over 2.6 s
-  with a banner and a soft whoosh.
-- **HUD:** population with births/s, territory share, and status (Growing / Slowing /
-  Dormant / Paused / Filled) with scale and speed.
-- **Simulation controls:** pause/resume and 1×/2×/4× speed, always visible above the tabs.
-  The space bar also pauses on a computer.
-- **Panels:** Colony (live facts, plain-language rules, replay or new world), Stats (this
-  world and lifetime), Settings (sound, volume, reduce motion, diagnostics, Rule Lab, save
-  now, reset). Upgrades, Mutations and Evolution are visibly locked and say which phase brings
-  them.
-- **Sound:** synthesized soft pops for births (rate-limited and quieter when busy), clicks,
-  and a zoom whoosh.
-- **Saving:** automatic every 10 s and when the app is hidden. The save is versioned and
-  validated, with a backup copy. A corrupted save starts fresh with a message.
-- **Developer tools:** a diagnostics overlay and a Rule Lab with live trait sliders.
+- Infinite chunked grid. Every faction starts as a random connected cluster of 5–9 cells.
+- Budget-based expansion at about one capture per second at the start, with a square-root
+  territory bonus.
+- Border combat using power, resistance, side support and entrenchment. Eliminated rivals are
+  removed, and if you are wiped out the run ends with a summary and a new run.
+- Energy from claims and conversions, with an HUD readout of the total and the per-second rate.
+- 17 upgrades in five categories. Prices escalate, there is ×1/×10/Max buying, unlocks are tied
+  to energy earned, and each card shows its current → next effect.
+- Rivals with five personalities plus a random personal twist each. They get progress matching
+  yours when they appear and buy upgrades as they earn. New ones appear as your reach grows, and
+  distant ones go dormant.
+- Camera: follows you, widens at milestones, supports drag, pinch and scroll zoom, and has a
+  re-centre button.
+- Capture pop animations that keep the old colour underneath, a small flinch on failed attacks,
+  and rate-limited sounds.
+- Notices for first contact, new rivals, eliminations and scale changes. The status reads
+  Expanding, At war, Losing ground, Paused or Defeated.
+- Panels: Territory (your numbers and build, every rival's profile, build and distance),
+  Upgrades, Prestige (a preview with no controls), Stats (this run and lifetime), Settings.
+- Version-2 saves. Old biology saves are set aside with a notice.
 
-## 2. How to test it (step by step)
+## 2. How to test it
 
 | # | Do this | Expect |
 | --- | --- | --- |
-| 1 | Open the game fresh | One black square in the middle of pale soil, and a dark tip at the top. "Got it" dismisses it for good |
-| 2 | Watch for 10–20 s | The square divides; newborns pop in grey, bounce slightly, darken to black. Population and births/s climb |
-| 3 | Tap anywhere, then listen | Soft pops as cells are born (sound needs one tap first) |
-| 4 | Wait ~30–60 s | A smooth zoom-out with a "Scale 2" banner. More soil and rock come into view |
-| 5 | Tap ⏸ | Growth stops; status says Paused. Tap ▶ to resume |
-| 6 | Tap 4× | Growth runs four times faster. The shapes look the same as 1×, just sooner |
-| 7 | Tap each bottom tab | Each panel opens; the colony stays visible above it. Close with ✕, the same tab, or Esc |
-| 8 | Colony → Replay world → Replay | Same terrain, back to one cell |
-| 9 | Colony → New world → New world | New terrain (new seed), back to one cell |
-| 10 | Settings → Developer → Open Rule Lab, drag **Branching** to 3+ and **Crowd refusal** to 2+ | New growth becomes lacy and finger-like within seconds. *Restore default rules* resets it |
-| 11 | Drag **Branching** to −2 and Crowd refusal to 0 | New growth fills in compactly |
-| 12 | Turn on **Diagnostics** | A small dark readout shows fps, tick rate, frontier size and one live decision with its option weights |
-| 13 | Close the browser and reopen | Same colony, scale, speed and settings |
-| 14 | Settings → Reset all progress… | Delete stays disabled until you tick the box. After deleting, everything starts over |
+| 1 | Open fresh | A small black cluster and a tip. The Upgrades tab has a green dot (you can afford something) |
+| 2 | Watch 10 s | About one square captured per second, each with a pop |
+| 3 | Upgrades → Expansion Rate → Buy | Energy drops, the level rises, and expansion visibly speeds up |
+| 4 | Tap a greyed-out upgrade | It shakes and tells you how much more energy you need |
+| 5 | Wait ~1–1.5 min | A "Contact" notice, status *At war*, and borders flickering where cells are fought over |
+| 6 | Territory tab | You and each rival, with personality, top upgrades and size |
+| 7 | Buy Branching (or Consolidation) a few times | New growth becomes finger-like (or compact) |
+| 8 | Drag the map; scroll or pinch | It pans and zooms. ◎ returns to following |
+| 9 | Keep playing | The view widens with "Scale N" banners, and new rivals are announced as you reach further |
+| 10 | Close and reopen | Same territory, upgrades and rivals |
+| 11 | Settings → New run… | Confirm starts a fresh world; Cancel keeps yours |
 
 Automated:
 
-- `npm test`: 25 unit tests, covering determinism, growth only into adjacent empty
-  non-rock cells, cache consistency, dormancy, maturation, filling the world, the decision
-  rule, emergent shape differences between rule sets, round (not diamond) shapes, early
-  pacing, save round-trips, backup recovery, corrupt and future saves, storage failures and
-  number formatting.
-- `npm run e2e`: 24 browser scenarios on a 390×844 phone and a 320×568 small phone. They
-  cover every tab and close method, pause and speed (measured tick rates), live values, the
-  zoom animation and banner, settings persisting, progress persisting, Rule Lab, the
-  replay/new-world/reset dialogs (cancel, backdrop and confirm paths), the filled-world
-  dialog, corrupted-save recovery, overlap and touch-target checks, and a 15,000-cell
-  performance check.
+- `npm test`: 36 tests. They cover the grid, starting clusters, pace, the size bonus, combat
+  odds, elimination and defeat, Branching vs Consolidation shapes, Momentum, Aggression,
+  Flanking, the first-minute economy, pricing, rival budgets and distinct builds, spawning,
+  dormancy, determinism, and saves (including old, corrupt and tampered ones).
+- `npm run e2e`: 29 browser scenarios on 390×844 and 320×568 phones. They cover every tab and
+  dialog, purchases (including refusals, ×10 and Max), locked upgrades unlocking live, pan, zoom
+  and re-centre, contact, scale milestones, persistence, new run, defeat, reset, error recovery,
+  old and corrupt saves, and a performance check. In that check a ~25,000-cell battle across 6
+  factions runs at about 0.15 ms per tick and draws in about 7–8 ms.
 
-**Not yet tested on a physical iPhone or Android device.** That is the first thing to do with
-this build.
+## 3. Defects found and fixed while building
 
-## 3. Defects found and fixed during this phase
+- Opening a panel shrank the battlefield and zoomed it out. Zoom now uses a fixed reference size,
+  so the view only gets shorter.
+- Rival distance was measured between territory centres ("17 cells away" while touching). It now
+  measures the gap between edges.
+- Events from the tick that ended a run weren't processed if the game stopped right after,
+  which would hide the defeat summary. They're now processed even while stopped.
+- Notices covered the pause/speed controls. They now sit above the controls, or above an open
+  panel.
 
-- **Diamond-shaped colonies.** Pure 4-neighbour growth with a branching preference let
-  axis-aligned tips outrun diagonal edges. Measured and fixed by adding a weak diagonal growth
-  option (20%). A test now guards against it.
-- **Seams between blocks at far zoom.** Square blocks used the smaller of their rounded
-  width and height, leaving uneven one-pixel lines (a moiré). Each edge is now rounded to
-  device pixels separately, and gaps turn off below 6 px per cell.
-- **Reset didn't reset.** The page saved itself again while reloading after "Delete
-  everything", restoring the old game. Saves are now blocked during a reset. Found by the
-  e2e suite.
-- **Number formatting.** `2.3B` displayed as `2.29B` because of floating-point rounding
-  (this also affects Accrete's formatter). Fixed with a small epsilon.
-- **Rock layout.** The first rock noise lined up in visible rows. Rotated sample coordinates
-  and a second octave now make the clusters irregular.
+## 4. Next steps (proposed order)
 
-## 4. UI / UX audit (§20.6)
-
-✓ = checked in the e2e suite and/or by reviewing screenshots. ◐ = needs a real device.
-
-| Check | Status |
-| --- | --- |
-| Every button functions | ✓ |
-| Every menu opens and closes (tab, ✕, Esc, backdrop) | ✓ |
-| Values update live | ✓ |
-| Locked features clearly identified | ✓ (lock badge + phase note) |
-| Popups always dismissible | ✓ |
-| Touch targets ≥ 38 px (most 44+) | ✓ |
-| No overlap at 390×844 and 320×568 | ✓ |
-| Safe areas respected | ◐ (uses `env(safe-area-inset-*)`, not yet seen on a notched phone) |
-| Settings persist | ✓ |
-| Save/load preserves progress | ✓ |
-| Corrupted saves handled | ✓ |
-| Numbers formatted consistently | ✓ |
-| Responsive with many cells | ✓ (15K cells: ~0.03 ms/tick, ~3 ms/frame headless) |
-| Reduced motion respected | ✓ (system setting + in-game toggle) |
-
-## 5. Next: Phase 2 (Biomass Economy)
-
-Proposed design, for your review:
-
-- Every living cell produces biomass in proportion to its soil fertility, and pays a flat
-  upkeep. New cells cost biomass, so the colony can only grow as fast as its economy allows.
-  Rich soil becomes economically valuable, not just a growth preference.
-- HUD: Biomass total with net/s replaces Territory as the first stat, and Territory moves to
-  the middle.
-- First upgrades (§13.1–13.2): Reproduction Rate, Growth Efficiency, Cell Maturation,
-  Branching Tendency, Biomass Production, Metabolic Efficiency. Each one maps onto an
-  existing trait or an economy number, so its effect is visible in the colony's shape or
-  speed.
-- Progressive starvation (§8.5): when net biomass is negative and reserves are empty,
-  division slows, then the poorest-soil edge cells lose health and die. The colony contracts
-  until it's sustainable again.
-- The Rule Lab stays as a developer tool until upgrades fully cover it.
+1. **Upgrade catalogue and AI depth:** add the remaining upgrades from the design (Breakthrough,
+   Overrun, Counterpressure, Isolation, Adaptability, Passive Income and others) and an
+   "Adaptive" rival that reacts to who is attacking it.
+2. **Prestige:** an "End run" option, a points formula and permanent upgrades.
+3. **Offline progress** with a "While you were away" summary.
+4. **Performance for very large worlds:** cached chunk drawing and coarse simulation of distant
+   regions.
+5. **Polish pass:** sound, small animations and a full interface audit on a real phone.

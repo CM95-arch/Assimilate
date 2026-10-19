@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { PLAYER_TRAITS, SAVE } from '../src/config/balance';
+import { SAVE } from '../src/config/balance';
+import { buy } from '../src/sim/economy';
 import { load, parse, save, serialize, type StorageLike } from '../src/persist/save';
-import { Simulation } from '../src/sim/sim';
+import { World } from '../src/sim/world';
 import { createSettings, createStats } from '../src/state';
 import { fmt, fmtDuration, fmtPct } from '../src/util/format';
 
@@ -10,60 +11,79 @@ function memStore(): StorageLike & { data: Map<string, string> } {
   return { data, getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v), removeItem: (k) => void data.delete(k) };
 }
 
-function grown(seed = 8, ticks = 500) {
-  const sim = new Simulation(seed);
-  sim.seedPlayer();
-  for (let t = 0; t < ticks; t++) sim.step();
-  return sim;
+function played(seed = 8, ticks = 1200) {
+  const w = World.create(seed);
+  buy(w.player, 'rate');
+  for (let t = 0; t < ticks; t++) w.step();
+  return w;
 }
 
+const snap = (world: World, extra: Partial<{ scale: number }> = {}) => ({ world, scale: extra.scale ?? 0, settings: createSettings(), stats: createStats() });
+
 describe('saves', () => {
-  it('round-trips the colony exactly', () => {
-    const sim = grown();
+  it('round-trips territory, factions, upgrades and energy exactly', () => {
+    const w = played();
+    const back = parse(serialize(snap(w, { scale: 2 }), 1000)).world;
+    expect(back.audit()).toEqual([]);
+    expect(back.tick).toBe(w.tick);
+    expect(back.factions.size).toBe(w.factions.size);
+    for (const f of w.factions.values()) {
+      const g = back.factions.get(f.id)!;
+      expect(g.cells).toBe(f.cells);
+      expect(g.frontier.size).toBe(f.frontier.size);
+      expect(g.levels).toEqual(f.levels);
+      expect(g.energy).toBeCloseTo(f.energy, 6);
+      expect(g.profile).toBe(f.profile);
+      expect(g.stats.rate).toBeCloseTo(f.stats.rate, 9);
+    }
+    w.grid.forEachOwned((x, y, o) => expect(back.grid.owner(x, y)).toBe(o));
+  });
+
+  it('a restored run carries on normally (random order of border cells may differ)', () => {
+    const a = played(5, 600);
+    const b = parse(serialize(snap(a), 0)).world;
+    for (let t = 0; t < 300; t++) {
+      a.step();
+      b.step();
+    }
+    expect(b.audit()).toEqual([]);
+    expect(b.player.cells).toBeGreaterThan(a.player.cells * 0.85);
+    expect(b.player.cells).toBeLessThan(a.player.cells * 1.15);
+  });
+
+  it('keeps settings and stats', () => {
     const settings = { ...createSettings(), speed: 4 as const, sound: false, introSeen: true };
-    const stats = { ...createStats(), cellsGrown: 1234, worldsStarted: 3 };
-    const snap = parse(serialize({ sim, scale: 2, settings, stats }, 1000));
-    expect(snap.sim.seed).toBe(sim.seed);
-    expect(snap.sim.tick).toBe(sim.tick);
-    expect(snap.sim.player.population).toBe(sim.player.population);
-    expect(Array.from(snap.sim.world.owner)).toEqual(Array.from(sim.world.owner));
-    expect(Array.from(snap.sim.world.dir).filter((_, i) => sim.world.owner[i] === 1)).toEqual(Array.from(sim.world.dir).filter((_, i) => sim.world.owner[i] === 1));
-    expect(snap.scale).toBe(2);
-    expect(snap.settings.speed).toBe(4);
-    expect(snap.settings.sound).toBe(false);
-    expect(snap.settings.introSeen).toBe(true);
-    expect(snap.stats.cellsGrown).toBe(1234);
-    expect(snap.sim.audit().problems).toEqual([]);
-  });
-
-  it('a restored colony keeps growing', () => {
-    const sim = grown(4, 300);
-    const snap = parse(serialize({ sim, scale: 0, settings: createSettings(), stats: createStats() }, 0));
-    const before = snap.sim.player.population;
-    for (let t = 0; t < 200; t++) snap.sim.step();
-    expect(snap.sim.player.population).toBeGreaterThan(before);
-  });
-
-  it('keeps Rule Lab traits and clamps out-of-range values', () => {
-    const settings = { ...createSettings(), customTraits: { ...PLAYER_TRAITS, branching: 99 } };
-    const snap = parse(serialize({ sim: grown(1, 10), scale: 0, settings, stats: createStats() }, 0));
-    expect(snap.settings.customTraits?.branching).toBe(4);
-    expect(snap.sim.player.traits.branching).toBe(4);
+    const stats = { ...createStats(), cellsConverted: 1234, runsStarted: 3 };
+    const s = parse(serialize({ world: played(1, 10), scale: 1, settings, stats }, 0));
+    expect(s.settings.speed).toBe(4);
+    expect(s.settings.sound).toBe(false);
+    expect(s.stats.cellsConverted).toBe(1234);
+    expect(s.stats.runsStarted).toBe(3);
+    expect(s.scale).toBe(1);
   });
 
   it('falls back to the backup when the main save is corrupt', () => {
     const store = memStore();
-    const sim = grown();
-    expect(save(store, { sim, scale: 1, settings: createSettings(), stats: createStats() }, 1)).toBe(true);
-    expect(save(store, { sim, scale: 1, settings: createSettings(), stats: createStats() }, 2)).toBe(true);
-    store.data.set(SAVE.key, '{"version":1,"world":{"seed":1,"cells":"!!!not base64"');
+    const w = played();
+    expect(save(store, snap(w), 1)).toBe(true);
+    expect(save(store, snap(w), 2)).toBe(true);
+    store.data.set(SAVE.key, '{"version":2,"world":{"seed":1');
     const r = load(store);
     expect(r.source).toBe('backup');
     expect(r.corrupt).toBe(true);
-    expect(r.snapshot?.sim.player.population).toBe(sim.player.population);
+    expect(r.snapshot?.world.player.cells).toBe(w.player.cells);
   });
 
-  it('starts fresh (without crashing) when every save is garbage or from the future', () => {
+  it('sets aside saves from the old biology design without calling them corrupt', () => {
+    const store = memStore();
+    store.data.set(SAVE.key, JSON.stringify({ version: 1, world: { seed: 1, cells: '' } }));
+    const r = load(store);
+    expect(r.snapshot).toBeNull();
+    expect(r.outdated).toBe(true);
+    expect(r.corrupt).toBe(false);
+  });
+
+  it('starts fresh when every save is garbage or from the future', () => {
     const store = memStore();
     store.data.set(SAVE.key, 'garbage');
     store.data.set(SAVE.backupKey, JSON.stringify({ version: 999 }));
@@ -72,14 +92,26 @@ describe('saves', () => {
     expect(r.corrupt).toBe(true);
   });
 
-  it('rejects a world of the wrong size', () => {
-    const bad = JSON.stringify({ version: 1, world: { seed: 1, tick: 0, cells: btoa('\x01\x01'), peak: 0, totalBorn: 0, scale: 0 } });
-    expect(() => parse(bad)).toThrow();
+  it('rejects chunks of the wrong size and saves without a player', () => {
+    const base = JSON.parse(serialize(snap(played(1, 20)), 0));
+    const bad = structuredClone(base);
+    bad.world.chunks[0].owner = btoa('\x01\x01');
+    expect(() => parse(JSON.stringify(bad))).toThrow();
+    const noPlayer = structuredClone(base);
+    noPlayer.world.factions = noPlayer.world.factions.filter((f: { id: number }) => f.id !== 1);
+    expect(() => parse(JSON.stringify(noPlayer))).toThrow();
+  });
+
+  it('clamps tampered upgrade levels', () => {
+    const base = JSON.parse(serialize(snap(played(1, 20)), 0));
+    base.world.factions[0].levels = { rate: 99999, nonsense: 5 };
+    const w = parse(JSON.stringify(base)).world;
+    expect(w.player.levels).toEqual({ rate: 60 });
   });
 
   it('reports storage failures instead of throwing', () => {
     const store: StorageLike = { getItem: () => null, setItem: () => { throw new Error('quota'); }, removeItem: () => {} };
-    expect(save(store, { sim: grown(1, 5), scale: 0, settings: createSettings(), stats: createStats() }, 0)).toBe(false);
+    expect(save(store, snap(played(1, 5)), 0)).toBe(false);
   });
 });
 

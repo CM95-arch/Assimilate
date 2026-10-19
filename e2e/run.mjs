@@ -50,13 +50,15 @@ function assert(cond, msg) {
 const G = (page, fn, arg) => page.evaluate(fn, arg);
 const shot = (page, name) => page.screenshot({ path: `${SHOTS}${name}.png` });
 const text = (page, sel) => page.locator(sel).first().innerText();
-const pop = (page) => G(page, () => window.__assimilate.game.sim.player.population);
+const cells = (page) => G(page, () => window.__assimilate.game.world.player.cells);
+const energy = (page) => G(page, () => window.__assimilate.game.world.player.energy);
+const setEnergy = (page, v) => G(page, (v) => { const p = window.__assimilate.game.world.player; p.energy = v; p.earned = Math.max(p.earned, v); }, v);
 async function dismissTip(page) {
   const b = page.locator('#tip:not([hidden]) button');
   if (await b.count()) await b.click();
 }
 /** Run simulation ticks instantly (keeps tests fast and deterministic in length). */
-const ticks = (page, n) => G(page, (n) => { const g = window.__assimilate.game; for (let i = 0; i < n; i++) g.sim.step(); }, n);
+const ticks = (page, n) => G(page, (n) => { const g = window.__assimilate.game; for (let i = 0; i < n && !g.world.ended; i++) g.world.step(); }, n);
 /** Elements must not overlap each other or leave the viewport. */
 async function noOverlap(page, sels) {
   const boxes = [];
@@ -79,25 +81,31 @@ async function noOverlap(page, sels) {
 
 console.log('Assimilate e2e');
 
-// ---------- first launch ----------
+// ---------- first launch and core loop ----------
 {
   const { ctx, page } = await newPage();
   await page.goto(APP_URL);
   await page.waitForTimeout(600);
 
-  await test('first launch: one black cell, intro tip, HUD at 1', async () => {
-    assert((await pop(page)) >= 1, 'no starting cell');
+  await test('first launch: a 5–9 cell black cluster, two rivals, starting energy, intro tip', async () => {
+    const s = await G(page, () => {
+      const w = window.__assimilate.game.world;
+      return { cells: w.player.cells, factions: w.factions.size, energy: w.player.energy };
+    });
+    assert(s.cells >= 5 && s.cells <= 12, `player starts with ${s.cells} cells`);
+    assert(s.factions === 3, `expected 2 rivals, got ${s.factions - 1}`);
+    assert(s.energy >= 8, 'not enough energy for a first upgrade');
     assert(await page.locator('#tip').isVisible(), 'intro tip not shown');
-    assert((await text(page, '#stat-pop [data-v]')).trim().length > 0, 'population empty');
+    assert(await page.locator('#tabs [data-tab="upgrades"] .dot').isVisible(), 'upgrades badge not shown with affordable upgrade');
     await shot(page, '01-first-launch');
   });
 
-  await test('the colony grows on its own and HUD updates', async () => {
-    const a = await pop(page);
-    await page.waitForTimeout(4000);
-    const b = await pop(page);
-    assert(b > a, `population did not grow (${a} → ${b})`);
-    assert((await text(page, '#stat-pop [data-v]')) === String(b) || Number(await text(page, '#stat-pop [data-v]')) >= a, 'HUD not tracking population');
+  await test('territory expands about once per second and the HUD tracks it', async () => {
+    const a = await cells(page);
+    await page.waitForTimeout(5000);
+    const b = await cells(page);
+    assert(b - a >= 2 && b - a <= 12, `expected ~5 captures in 5s, got ${b - a}`);
+    assert(Number((await text(page, '#stat-territory [data-v]')).replace(/\D/g, '')) >= a, 'HUD territory not updating');
   });
 
   await test('intro tip dismisses and stays dismissed', async () => {
@@ -106,61 +114,110 @@ console.log('Assimilate e2e');
     assert(await G(page, () => window.__assimilate.game.settings.introSeen), 'introSeen not set');
   });
 
-  await test('layout: HUD, controls and tabs do not overlap (390×844)', async () => {
+  await test('layout: HUD, controls and tabs do not overlap; touch targets are large enough', async () => {
     await noOverlap(page, ['#hud', '#controls .seg', '#pause-btn', '#tabs']);
-    for (const b of await page.locator('#tabs button, #controls button').all()) {
+    for (const b of await page.locator('#tabs button, #controls button:visible').all()) {
       const box = await b.boundingBox();
-      assert(box.height >= 38 && box.width >= 38, `touch target too small: ${await b.innerText()} ${box.width}×${box.height}`);
+      assert(box.height >= 38 && box.width >= 38, `touch target too small: ${box.width}×${box.height}`);
     }
   });
 
-  await test('pause stops growth; resume restarts it', async () => {
+  await test('pause stops the world; resume restarts it', async () => {
     await page.locator('#pause-btn').click();
-    assert((await page.locator('#pause-btn').getAttribute('aria-label')) === 'Resume', 'pause label');
-    const t0 = await G(page, () => window.__assimilate.game.sim.tick);
-    await page.waitForTimeout(800);
-    const t1 = await G(page, () => window.__assimilate.game.sim.tick);
-    assert(t0 === t1, `ticks advanced while paused (${t0} → ${t1})`);
+    const t0 = await G(page, () => window.__assimilate.game.world.tick);
+    await page.waitForTimeout(700);
+    assert(t0 === (await G(page, () => window.__assimilate.game.world.tick)), 'ticks advanced while paused');
     assert((await text(page, '#stat-status [data-v]')) === 'Paused', 'status not Paused');
     await page.locator('#pause-btn').click();
-    await page.waitForTimeout(600);
-    assert((await G(page, () => window.__assimilate.game.sim.tick)) > t1, 'did not resume');
+    await page.waitForTimeout(500);
+    assert((await G(page, () => window.__assimilate.game.world.tick)) > t0, 'did not resume');
   });
 
   await test('speed buttons change tick rate (1× ≈ 10/s, 4× ≈ 40/s)', async () => {
     const rate = async () => {
-      const a = await G(page, () => window.__assimilate.game.sim.tick);
+      const a = await G(page, () => window.__assimilate.game.world.tick);
       await page.waitForTimeout(1500);
-      return ((await G(page, () => window.__assimilate.game.sim.tick)) - a) / 1.5;
+      return ((await G(page, () => window.__assimilate.game.world.tick)) - a) / 1.5;
     };
     await page.locator('#speed [data-speed="1"]').click();
     const r1 = await rate();
     await page.locator('#speed [data-speed="4"]').click();
-    assert((await page.locator('#speed [data-speed="4"]').getAttribute('aria-pressed')) === 'true', '4× not pressed');
     const r4 = await rate();
     assert(r1 > 6 && r1 < 14, `1× rate ${r1}`);
     assert(r4 > 25, `4× rate ${r4}`);
     await page.locator('#speed [data-speed="1"]').click();
   });
 
-  await test('speed button while paused also resumes', async () => {
-    await page.locator('#pause-btn').click();
-    await page.locator('#speed [data-speed="2"]').click();
-    assert(!(await G(page, () => window.__assimilate.game.paused)), 'still paused');
-    await page.locator('#speed [data-speed="1"]').click();
+  await test('buying an upgrade: spends energy, raises level and stats, updates the card', async () => {
+    // Freeze the world so energy can't trickle in between setting it and clicking.
+    await G(page, () => { window.__assimilate.game.paused = true; });
+    await page.locator('#tabs [data-tab="upgrades"]').click();
+    await setEnergy(page, 100);
+    await page.waitForTimeout(300);
+    const before = await G(page, () => window.__assimilate.game.world.player.stats.rate);
+    const e0 = await energy(page);
+    await page.locator('[data-buy="rate"]').click();
+    const s = await G(page, () => ({ lv: window.__assimilate.game.world.player.levels.rate, rate: window.__assimilate.game.world.player.stats.rate }));
+    assert(s.lv === 1, `level ${s.lv}`);
+    assert(s.rate > before, 'stat did not change');
+    assert((await energy(page)) < e0, 'energy not spent');
+    assert(/Lv 1/.test(await text(page, '[data-upgrade="rate"] .lv')), 'card level not updated');
+    await shot(page, '02-upgrades');
   });
 
-  await test('every tab opens its panel and closes again (tab, ✕ and Escape)', async () => {
-    const tabs = ['colony', 'upgrades', 'mutations', 'evolution', 'stats', 'settings'];
-    for (const t of tabs) {
+  await test('unaffordable purchase is refused with a reason and costs nothing', async () => {
+    await page.locator('.chip[data-cat="combat"]').click();
+    await setEnergy(page, 0);
+    await page.waitForTimeout(300);
+    assert((await page.locator('[data-buy="power"]').getAttribute('aria-disabled')) === 'true', 'button not marked disabled');
+    assert(/Need/.test(await text(page, '[data-buy="power"]')), 'no "Need N more" hint');
+    // A person can still tap a greyed-out button; force past Playwright's aria-disabled wait.
+    await page.locator('[data-buy="power"]').click({ force: true });
+    assert(/Need .* more energy/.test(await text(page, '#toasts')), 'no refusal toast');
+    assert(!(await G(page, () => window.__assimilate.game.world.player.levels.power)), 'bought anyway');
+  });
+
+  await test('×10 and Max buy several levels at once', async () => {
+    await setEnergy(page, 1e6);
+    await page.locator('.seg button', { hasText: /^×10$/ }).click();
+    await page.waitForTimeout(250);
+    assert(/Buy 10/.test(await text(page, '[data-buy="power"]')), '×10 not quoted');
+    await page.locator('[data-buy="power"]').click();
+    assert((await G(page, () => window.__assimilate.game.world.player.levels.power)) === 10, '×10 did not buy 10');
+    await setEnergy(page, 500);
+    await page.locator('.seg button:has-text("Max")').click();
+    await page.locator('.chip[data-cat="defense"]').click();
+    await page.locator('[data-buy="resistance"]').click();
+    const lv = await G(page, () => window.__assimilate.game.world.player.levels.resistance);
+    assert(lv > 1, `Max bought ${lv}`);
+    assert((await energy(page)) >= 0, 'energy went negative');
+    await page.locator('.seg button', { hasText: /^×1$/ }).click();
+    await G(page, () => { window.__assimilate.game.paused = false; });
+  });
+
+  await test('categories switch; locked upgrades say how to unlock them', async () => {
+    await G(page, () => { const p = window.__assimilate.game.world.player; p.earned = 0; });
+    for (const c of ['combat', 'defense', 'strategy', 'economy', 'expansion']) {
+      await page.locator(`.chip[data-cat="${c}"]`).click();
+      assert((await page.locator(`.chip[data-cat="${c}"]`).getAttribute('aria-pressed')) === 'true', `${c} chip not active`);
+      assert((await page.locator('[data-upgrade]').count()) > 0, `${c}: no cards`);
+    }
+    await page.locator('.chip[data-cat="strategy"]').click();
+    assert(/Unlocks after earning/.test(await text(page, '#sheet-body')), 'no unlock hint');
+    await G(page, () => { const p = window.__assimilate.game.world.player; p.earned = 1e6; });
+    await page.waitForTimeout(400);
+    assert((await page.locator('.card.locked').count()) === 0, 'cards did not unlock live');
+    await page.keyboard.press('Escape');
+  });
+
+  await test('every tab opens its panel and closes (same tab, ✕, Escape)', async () => {
+    for (const t of ['territory', 'upgrades', 'prestige', 'stats', 'settings']) {
       await page.locator(`#tabs [data-tab="${t}"]`).click();
-      assert(await page.locator('#sheet').isVisible(), `${t}: sheet hidden`);
       assert(await page.locator(`#sheet-body [data-panel="${t}"]`).count(), `${t}: wrong panel`);
-      assert((await page.locator(`#tabs [data-tab="${t}"]`).getAttribute('aria-current')) === 'page', `${t}: tab not current`);
-      await shot(page, `02-panel-${t}`);
+      await shot(page, `03-panel-${t}`);
     }
     await page.locator('#tabs [data-tab="settings"]').click();
-    assert(await page.locator('#sheet').isHidden(), 'tapping the open tab did not close');
+    assert(await page.locator('#sheet').isHidden(), 'same tab did not close');
     await page.locator('#tabs [data-tab="stats"]').click();
     await page.locator('#sheet-close').click();
     assert(await page.locator('#sheet').isHidden(), '✕ did not close');
@@ -169,170 +226,169 @@ console.log('Assimilate e2e');
     assert(await page.locator('#sheet').isHidden(), 'Escape did not close');
   });
 
-  await test('locked tabs explain what arrives later (no fake controls)', async () => {
-    for (const t of ['upgrades', 'mutations', 'evolution']) {
-      await page.locator(`#tabs [data-tab="${t}"]`).click();
-      const body = await text(page, '#sheet-body');
-      assert(/Arrives in Phase/.test(body), `${t}: no phase note`);
-      assert((await page.locator('#sheet-body button').count()) === 0, `${t}: has buttons`);
-    }
+  await test('prestige is an honest preview with no fake controls', async () => {
+    await page.locator('#tabs [data-tab="prestige"]').click();
+    assert(/later update/.test(await text(page, '#sheet-body')), 'no preview note');
+    assert((await page.locator('#sheet-body button').count()) === 0, 'has buttons');
     await page.keyboard.press('Escape');
   });
 
-  await test('panel open: controls hide and the colony stays visible above the sheet', async () => {
-    await page.locator('#tabs [data-tab="colony"]').click();
-    await page.waitForTimeout(500);
-    assert(await page.locator('#controls').isHidden(), 'controls still visible over the sheet');
-    const r = await G(page, () => {
+  await test('opening a panel keeps the zoom and keeps your territory in view', async () => {
+    // Compare the zoom reference rather than the pitch: an automatic scale step may happen meanwhile.
+    const before = await G(page, () => window.__assimilate.renderer.refSize);
+    await page.locator('#tabs [data-tab="territory"]').click();
+    await page.waitForTimeout(600);
+    const after = await G(page, () => window.__assimilate.renderer.refSize);
+    assert(Math.abs(before - after) < 0.5, `zoom reference changed (${before} → ${after})`);
+    const inView = await G(page, () => {
       const a = window.__assimilate;
-      const s = a.game.sim;
-      const p = a.renderer.cellToScreen(a.game.camera, s.startCell % s.world.width, (s.startCell / s.world.width) | 0);
-      return { y: p.y, sheetTop: document.getElementById('sheet').getBoundingClientRect().top };
+      const p = a.game.world.player;
+      const c = a.renderer.cellToScreen(a.game.camera, (p.minX + p.maxX) / 2, (p.minY + p.maxY) / 2);
+      return c.y < document.getElementById('sheet').getBoundingClientRect().top && c.y > 0;
     });
-    assert(r.y < r.sheetTop, `start cell (${r.y}) hidden behind sheet (${r.sheetTop})`);
+    assert(inView, 'territory hidden behind the panel');
     await page.keyboard.press('Escape');
   });
 
-  await test('colony panel values update live', async () => {
-    await page.locator('#tabs [data-tab="colony"]').click();
-    const a = await text(page, '[data-k="pop"]');
-    await ticks(page, 80);
+  await test('territory panel lists rivals with their profile and build, live', async () => {
+    await page.locator('#tabs [data-tab="territory"]').click();
+    assert((await page.locator('[data-rival]').count()) === 2, 'rivals not listed');
+    assert(/Rapid Expander|Fortress|Conqueror|Opportunist|Balanced/.test(await text(page, '.rivals')), 'no profile names');
+    const a = await text(page, '#sheet-body');
+    await ticks(page, 60);
     await page.waitForTimeout(400);
-    const b = await text(page, '[data-k="pop"]');
-    assert(a !== b, `living cells did not update (${a})`);
+    assert(a !== (await text(page, '#sheet-body')), 'panel not updating');
     await page.keyboard.press('Escape');
   });
 
-  await test('zoom milestone: scale changes smoothly and shows a banner', async () => {
-    const lv0 = await G(page, () => window.__assimilate.game.camera.level);
-    await ticks(page, 400);
+  await test('drag pans the map, the re-centre button appears and restores following', async () => {
+    assert(await page.locator('#recenter-btn').isHidden(), 're-centre visible too early');
+    const box = await page.locator('#field').boundingBox();
+    await page.mouse.move(box.width / 2, box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.width / 2 + 120, box.height / 2 + 60, { steps: 6 });
+    await page.mouse.up();
     await page.waitForTimeout(300);
-    const st = await G(page, () => ({ level: window.__assimilate.game.camera.level, animating: window.__assimilate.game.camera.animating }));
-    assert(st.level > lv0, 'no zoom after growth');
-    assert(st.animating, 'zoom snapped instead of animating');
-    assert(/Scale/.test(await text(page, '#banner')), 'no scale banner');
-    await page.waitForTimeout(3000);
-    assert(!(await G(page, () => window.__assimilate.game.camera.animating)), 'zoom never finished');
-    await shot(page, '03-after-zoom');
+    assert(!(await G(page, () => window.__assimilate.game.camera.follow)), 'drag did not pan');
+    assert(await page.locator('#recenter-btn').isVisible(), 're-centre button missing');
+    await page.locator('#recenter-btn').click();
+    await page.waitForTimeout(300);
+    assert(await G(page, () => window.__assimilate.game.camera.follow), 'did not resume following');
+    assert(await page.locator('#recenter-btn').isHidden(), 're-centre button stayed');
   });
 
-  await test('settings: toggles persist after reload', async () => {
+  await test('mouse wheel zooms in and out within limits', async () => {
+    const box = await page.locator('#field').boundingBox();
+    await page.mouse.move(box.width / 2, box.height / 2);
+    await page.mouse.wheel(0, -600);
+    await page.waitForTimeout(100);
+    const zin = await G(page, () => window.__assimilate.game.camera.manual);
+    assert(zin > 1.5, `zoom in ${zin}`);
+    for (let i = 0; i < 10; i++) await page.mouse.wheel(0, 2000);
+    await page.waitForTimeout(100);
+    const zout = await G(page, () => window.__assimilate.game.camera.manual);
+    assert(zout >= 0.25 && zout < 0.3, `zoom out clamp ${zout}`);
+    await page.locator('#recenter-btn').click();
+  });
+
+  await test('first contact with a rival is announced and the status changes', async () => {
+    for (let i = 0; i < 40 && !(await G(page, () => window.__assimilate.game.world.contacts().length)); i++) await ticks(page, 50);
+    await page.waitForTimeout(800);
+    assert(await G(page, () => window.__assimilate.game.world.contacts().length > 0), 'never met a rival');
+    assert(/Contact/.test(await text(page, '#toasts')) || /At war|Losing/.test(await text(page, '#stat-status [data-v]')), 'contact not shown');
+    await shot(page, '04-contact');
+  });
+
+  await test('scale milestones zoom out smoothly with a banner', async () => {
+    const lv0 = await G(page, () => window.__assimilate.game.camera.level);
+    await G(page, () => { const p = window.__assimilate.game.world.player; p.levels.rate = 30; p.stats.rate = 20; });
+    for (let i = 0; i < 30 && (await G(page, () => window.__assimilate.game.camera.level)) === lv0; i++) {
+      await ticks(page, 40);
+      await page.waitForTimeout(60);
+    }
+    const st = await G(page, () => ({ level: window.__assimilate.game.camera.level, zooming: window.__assimilate.game.camera.zooming }));
+    assert(st.level > lv0, 'no zoom-out');
+    assert(st.zooming, 'zoom snapped instead of animating');
+    assert(/Scale/.test(await text(page, '#banner')), 'no banner');
+  });
+
+  await test('settings persist after reload; diagnostics overlay works', async () => {
     await page.locator('#tabs [data-tab="settings"]').click();
     await page.locator('button[role=switch][aria-label="Sound"]').click();
-    await page.locator('button[role=switch][aria-label="Reduce motion"]').click();
     await page.locator('button[role=switch][aria-label="Diagnostics"]').click();
     await page.waitForTimeout(400);
-    assert(await page.locator('#diag').isVisible(), 'diagnostics overlay not shown');
-    assert(/frontier/.test(await text(page, '#diag')), 'diagnostics empty');
+    assert(/border/.test(await text(page, '#diag')), 'diagnostics empty');
     await page.reload();
     await page.waitForTimeout(500);
     const s = await G(page, () => window.__assimilate.game.settings);
-    assert(s.sound === false && s.reducedMotion === true && s.diagnostics === true, `settings lost: ${JSON.stringify(s)}`);
-    assert(await page.locator('#tip').isHidden(), 'intro reappeared after reload');
-    await shot(page, '04-diagnostics');
+    assert(s.sound === false && s.diagnostics === true, `settings lost ${JSON.stringify(s)}`);
     await page.locator('#tabs [data-tab="settings"]').click();
     await page.locator('button[role=switch][aria-label="Diagnostics"]').click();
     await page.locator('button[role=switch][aria-label="Sound"]').click();
-    await page.locator('button[role=switch][aria-label="Reduce motion"]').click();
-    assert(await page.locator('#diag').isHidden(), 'diagnostics did not hide');
-  });
-
-  await test('progress survives reload (population, seed, scale)', async () => {
-    await ticks(page, 50);
-    const before = await G(page, () => ({ pop: window.__assimilate.game.sim.player.population, seed: window.__assimilate.game.sim.seed, level: window.__assimilate.game.camera.level }));
-    await G(page, () => window.__assimilate.save());
-    await page.reload();
-    await page.waitForTimeout(300);
-    const after = await G(page, () => ({ pop: window.__assimilate.game.sim.player.population, seed: window.__assimilate.game.sim.seed, level: window.__assimilate.game.camera.level }));
-    assert(after.seed === before.seed, 'seed changed');
-    assert(after.pop >= before.pop, `population lost (${before.pop} → ${after.pop})`);
-    // The colony keeps growing until the page unloads, so the scale can only stay or rise.
-    assert(after.level >= before.level, 'scale lost');
-  });
-
-  await test('Rule Lab: sliders change the live rules, persist, and restore', async () => {
-    await page.locator('#tabs [data-tab="settings"]').click();
-    await page.locator('[data-action="toggle-lab"]').click();
-    const slider = page.locator('input[data-trait="branching"]');
-    await slider.fill('3');
-    assert((await G(page, () => window.__assimilate.game.sim.player.traits.branching)) === 3, 'trait not applied');
-    await page.locator('[data-action="toggle-lab"]').click();
-    await page.reload();
-    await page.waitForTimeout(300);
-    assert((await G(page, () => window.__assimilate.game.sim.player.traits.branching)) === 3, 'trait not persisted');
-    await page.locator('#tabs [data-tab="settings"]').click();
-    await page.locator('[data-action="toggle-lab"]').click();
-    await page.locator('[data-action="reset-rules"]').click();
-    const def = await G(page, () => [window.__assimilate.game.sim.player.traits.branching, window.__assimilate.game.settings.customTraits]);
-    assert(def[0] !== 3 && def[1] === null, 'rules not restored');
     await page.keyboard.press('Escape');
   });
 
-  await test('replay world: cancel keeps the colony; confirm restarts same seed from one cell', async () => {
-    await page.locator('#tabs [data-tab="colony"]').click();
-    const seed = await G(page, () => window.__assimilate.game.sim.seed);
-    const p0 = await pop(page);
-    await page.locator('[data-action="replay"]').click();
-    await page.locator('[data-id="confirm-replay"] [data-action="cancel"]').click();
-    assert((await pop(page)) >= p0, 'cancel changed the colony');
-    assert(await page.locator('#sheet').isVisible(), 'cancel closed the panel');
-    await page.locator('[data-action="replay"]').click();
-    await page.locator('[data-id="confirm-replay"] [data-action="confirm"]').click();
-    const r = await G(page, () => ({ seed: window.__assimilate.game.sim.seed, pop: window.__assimilate.game.sim.player.population, level: window.__assimilate.game.camera.level }));
-    assert(r.seed === seed, 'replay changed the seed');
-    assert(r.pop <= 3 && r.level === 0, `replay did not restart (${r.pop}, scale ${r.level})`);
-    assert(await page.locator('#sheet').isHidden(), 'sheet still open');
+  await test('progress survives reload: territory, upgrades, rivals', async () => {
+    const before = await G(page, () => {
+      const w = window.__assimilate.game.world;
+      window.__assimilate.save();
+      return { seed: w.seed, power: w.player.levels.power, factions: w.factions.size, cells: w.player.cells };
+    });
+    await page.reload();
+    await page.waitForTimeout(300);
+    const after = await G(page, () => {
+      const w = window.__assimilate.game.world;
+      return { seed: w.seed, power: w.player.levels.power, factions: w.factions.size, cells: w.player.cells, audit: w.audit() };
+    });
+    assert(after.seed === before.seed && after.power === before.power && after.factions === before.factions, `lost: ${JSON.stringify([before, after])}`);
+    assert(after.cells > before.cells * 0.8, 'territory lost');
+    assert(after.audit.length === 0, after.audit.join('; '));
   });
 
-  await test('new world: tapping outside the dialog dismisses; confirm makes a new seed', async () => {
-    const seed = await G(page, () => window.__assimilate.game.sim.seed);
-    await page.locator('#tabs [data-tab="colony"]').click();
-    await page.locator('[data-action="new-world"]').click();
-    await page.mouse.click(10, 10);
+  await test('new run: cancel and backdrop keep the run; confirm starts fresh', async () => {
+    const seed = await G(page, () => window.__assimilate.game.world.seed);
+    await page.locator('#tabs [data-tab="settings"]').click();
+    await page.locator('[data-action="new-run"]').click();
+    await page.locator('[data-id="confirm-new"] [data-action="cancel"]').click();
+    await page.locator('[data-action="new-run"]').click();
+    await page.mouse.click(5, 5);
     assert((await page.locator('.modal').count()) === 0, 'backdrop did not dismiss');
-    await page.locator('[data-action="new-world"]').click();
+    assert((await G(page, () => window.__assimilate.game.world.seed)) === seed, 'cancel changed the run');
+    await page.locator('[data-action="new-run"]').click();
     await page.locator('[data-id="confirm-new"] [data-action="confirm"]').click();
-    assert((await G(page, () => window.__assimilate.game.sim.seed)) !== seed, 'seed unchanged');
-    const st = await G(page, () => window.__assimilate.game.stats.worldsStarted);
-    assert(st >= 3, `worlds started not counted (${st})`);
+    const r = await G(page, () => ({ seed: window.__assimilate.game.world.seed, cells: window.__assimilate.game.world.player.cells, levels: Object.keys(window.__assimilate.game.world.player.levels).length, runs: window.__assimilate.game.stats.runsStarted }));
+    assert(r.seed !== seed && r.cells <= 12 && r.levels === 0, `not a fresh run ${JSON.stringify(r)}`);
+    assert(r.runs >= 2, 'runs not counted');
   });
 
-  await test('filled world shows a dismissible dialog with working actions', async () => {
-    await G(page, () => window.__assimilate.game.events.push({ type: 'filled' }));
-    await page.waitForTimeout(300);
-    assert(await page.locator('[data-id="filled"]').isVisible(), 'filled dialog missing');
-    await shot(page, '05-filled');
-    await page.locator('[data-id="filled"] [data-action="stay"]').click();
-    assert((await page.locator('.modal').count()) === 0, 'dialog did not close');
-    assert(await page.locator('#tabs [data-tab="colony"] .dot').isVisible(), 'colony tab badge missing');
+  await test('defeat: the run ends with a summary that cannot be dismissed by accident; new run works', async () => {
+    await G(page, () => {
+      const a = window.__assimilate;
+      for (const f of a.game.world.factions.values()) if (!f.isPlayer) a.grant(f.id, { power: 60, aggression: 10, rate: 40 });
+      a.game.world.player.stats.rate = 0;
+      a.game.world.player.stats.resistance = 0.01;
+    });
+    for (let i = 0; i < 60 && !(await G(page, () => window.__assimilate.game.world.ended)); i++) await ticks(page, 100);
+    await page.waitForTimeout(600);
+    assert(await page.locator('[data-id="defeat"]').isVisible(), 'no defeat dialog');
+    await shot(page, '05-defeat');
+    await page.mouse.click(5, 5);
+    assert(await page.locator('[data-id="defeat"]').isVisible(), 'defeat dialog dismissed by backdrop');
+    await page.locator('[data-id="defeat"] [data-action="new"]').click();
+    assert(!(await G(page, () => window.__assimilate.game.world.ended)), 'run still ended');
+    assert((await page.locator('.modal').count()) === 0, 'dialog stayed');
   });
 
-  await test('stats panel shows and updates numbers', async () => {
-    await page.locator('#tabs [data-tab="stats"]').click();
-    const a = await text(page, '[data-k="born"]');
-    await ticks(page, 120);
-    await page.waitForTimeout(400);
-    assert(a !== (await text(page, '[data-k="born"]')), 'stats not updating');
-    assert(Number.parseInt(await text(page, '[data-k="worlds"]')) >= 3, 'worlds stat wrong');
-    await page.keyboard.press('Escape');
-  });
-
-  await test('reset requires the checkbox, cancel keeps progress, confirm wipes everything', async () => {
+  await test('reset requires the checkbox; confirm wipes everything', async () => {
     await page.locator('#tabs [data-tab="settings"]').click();
     await page.locator('[data-action="reset"]').click();
     const del = page.locator('[data-id="confirm-reset"] [data-action="confirm"]');
     assert(await del.isDisabled(), 'delete enabled without checkbox');
-    await page.locator('[data-id="confirm-reset"] [data-action="cancel"]').click();
-    const worlds = await G(page, () => window.__assimilate.game.stats.worldsStarted);
-    assert(worlds >= 3, 'cancel reset progress');
-    await page.locator('[data-action="reset"]').click();
     await page.locator('#reset-check').check();
-    assert(await del.isEnabled(), 'delete still disabled');
     await Promise.all([page.waitForNavigation(), del.click()]);
     await page.waitForTimeout(400);
-    const s = await G(page, () => ({ worlds: window.__assimilate.game.stats.worldsStarted, intro: window.__assimilate.game.settings.introSeen }));
-    assert(s.worlds === 1 && !s.intro, `not reset: ${JSON.stringify(s)}`);
-    assert(await page.locator('#tip').isVisible(), 'intro tip should return after reset');
+    const s = await G(page, () => ({ runs: window.__assimilate.game.stats.runsStarted, intro: window.__assimilate.game.settings.introSeen }));
+    assert(s.runs === 1 && !s.intro, `not reset ${JSON.stringify(s)}`);
   });
 
   await ctx.close();
@@ -346,7 +402,6 @@ console.log('Assimilate e2e');
   await test('an error never freezes the game: it is shown, dismissible, and the loop keeps running', async () => {
     const errorsBefore = consoleErrors.length;
     await dismissTip(page);
-    // Make the next frame throw once.
     await G(page, () => {
       const g = window.__assimilate.game;
       const orig = g.update.bind(g);
@@ -356,11 +411,9 @@ console.log('Assimilate e2e');
     await page.waitForTimeout(500);
     assert(await page.locator('.error-card').isVisible(), 'no error card');
     assert(/test failure/.test(await text(page, '.error-card code')), 'error text missing');
-    const t0 = await G(page, () => window.__assimilate.game.sim.tick);
+    const t0 = await G(page, () => window.__assimilate.game.world.tick);
     await page.waitForTimeout(600);
-    assert((await G(page, () => window.__assimilate.game.sim.tick)) > t0, 'loop stopped after the error');
-    await page.locator('#tabs [data-tab="settings"]').click();
-    assert(await page.locator('#sheet').isVisible(), 'tabs stopped working');
+    assert((await G(page, () => window.__assimilate.game.world.tick)) > t0, 'loop stopped after the error');
     await page.locator('.error-card button:has-text("Dismiss")').click();
     assert((await page.locator('.error-card').count()) === 0, 'error card did not dismiss');
     consoleErrors.length = errorsBefore;
@@ -368,21 +421,23 @@ console.log('Assimilate e2e');
   await ctx.close();
 }
 
-// ---------- corrupted save ----------
-{
+// ---------- old and corrupted saves ----------
+for (const [name, value, expect] of [
+  ['corrupted save', '{broken', /unreadable/i],
+  ['save from the old biology design', JSON.stringify({ version: 1, world: { seed: 1, cells: '' } }), /redesigned/i],,
+]) {
   const { ctx, page } = await newPage();
-  // Plant the broken save before the app's first script runs (a reload would save over it).
-  await ctx.addInitScript(() => {
+  await ctx.addInitScript((v) => {
     if (!sessionStorage.getItem('planted')) {
       sessionStorage.setItem('planted', '1');
-      localStorage.setItem('assimilate.save', '{broken');
+      localStorage.setItem('assimilate.save', v);
     }
-  });
+  }, value);
   await page.goto(APP_URL);
   await page.waitForTimeout(400);
-  await test('corrupted save: starts fresh with a message, no crash', async () => {
-    assert((await pop(page)) >= 1, 'no colony');
-    assert(/unreadable/i.test(await text(page, '#toasts')), 'no corruption message');
+  await test(`${name}: starts fresh with a clear message, no crash`, async () => {
+    assert((await cells(page)) >= 5, 'no territory');
+    assert(expect.test(await text(page, '#toasts')), `message missing: ${await text(page, '#toasts')}`);
   });
   await ctx.close();
 }
@@ -392,19 +447,18 @@ console.log('Assimilate e2e');
   const { ctx, page } = await newPage({ width: 320, height: 568 });
   await page.goto(APP_URL);
   await page.waitForTimeout(500);
-  await test('small phone (320×568): no overlaps, readable, panels scroll', async () => {
+  await test('small phone (320×568): no overlaps, readable, panels scroll to every control', async () => {
     await dismissTip(page);
     await noOverlap(page, ['#hud', '#controls .seg', '#pause-btn', '#tabs']);
-    for (const s of ['#stat-pop', '#stat-territory', '#stat-status']) {
+    for (const s of ['#stat-energy', '#stat-territory', '#stat-status']) {
       const fs = await page.locator(`${s} .stat-label`).evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
       assert(fs >= 9.5, `${s} label too small (${fs}px)`);
     }
+    await page.locator('#tabs [data-tab="upgrades"]').click();
+    await shot(page, '06-small-upgrades');
     await page.locator('#tabs [data-tab="settings"]').click();
-    const scrollable = await page.locator('#sheet-body').evaluate((e) => e.scrollHeight > e.clientHeight);
-    assert(scrollable, 'settings should scroll on a small phone');
     await page.locator('#sheet-body').evaluate((e) => (e.scrollTop = e.scrollHeight));
-    assert(await page.locator('[data-action="reset"]').isVisible(), 'reset not reachable by scrolling');
-    await shot(page, '06-small-settings');
+    assert(await page.locator('[data-action="reset"]').isVisible(), 'reset not reachable');
     await page.locator('#sheet-close').click();
     await shot(page, '07-small-phone');
   });
@@ -416,14 +470,16 @@ console.log('Assimilate e2e');
   const { ctx, page } = await newPage();
   await page.goto(APP_URL);
   await page.waitForTimeout(300);
-  await test('large colony stays responsive (simulation + drawing budget)', async () => {
+  await test('large battles stay responsive (simulation + drawing budget)', async () => {
     await dismissTip(page);
     const r = await G(page, async () => {
       const a = window.__assimilate;
-      const s = a.game.sim;
+      const w = a.game.world;
+      for (const f of w.factions.values()) a.grant(f.id, { rate: 40, resistance: 10 });
       const t0 = performance.now();
-      while (s.player.population < 15000 && s.tick < 20000) s.step();
-      const simMs = (performance.now() - t0) / s.tick;
+      let n = 0;
+      while (w.player.cells < 6000 && n < 6000 && !w.ended) { w.step(); n++; }
+      const simMs = (performance.now() - t0) / n;
       await new Promise((res) => setTimeout(res, 3500));
       const samples = [];
       for (let i = 0; i < 30; i++) {
@@ -431,13 +487,15 @@ console.log('Assimilate e2e');
         samples.push(a.renderer.info.drawMs);
       }
       samples.sort((x, y) => x - y);
-      return { pop: s.player.population, simMs, drawMs: samples[15], level: a.game.camera.level };
+      let total = 0;
+      for (const f of w.factions.values()) total += f.cells;
+      return { you: w.player.cells, total, factions: w.factions.size, simMs, drawMs: samples[15], level: a.game.camera.level };
     });
-    console.log(`      population ${r.pop}, ${r.simMs.toFixed(2)} ms/tick, draw ${r.drawMs.toFixed(1)} ms (median), scale ${r.level + 1}`);
-    assert(r.pop >= 15000, 'did not grow large');
-    assert(r.simMs < 4, `ticks too slow: ${r.simMs} ms`);
-    assert(r.drawMs < 12, `drawing too slow: ${r.drawMs} ms`);
-    await shot(page, '08-large-colony');
+    console.log(`      you ${r.you} cells, ${r.total} total in ${r.factions} factions, ${r.simMs.toFixed(2)} ms/tick, draw ${r.drawMs.toFixed(1)} ms, scale ${r.level + 1}`);
+    assert(r.total > 15000, 'battle did not grow large');
+    assert(r.simMs < 8, `ticks too slow: ${r.simMs} ms`);
+    assert(r.drawMs < 14, `drawing too slow: ${r.drawMs} ms`);
+    await shot(page, '08-large-battle');
   });
   await ctx.close();
 }

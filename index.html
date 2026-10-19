@@ -8,7 +8,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Assimilate" />
-    <meta name="description" content="One black square on a white grid. It grows by itself. Watch a living colony emerge from simple rules." />
+    <meta name="description" content="An idle territory-conquest game: shape how your black territory spreads and fights rival factions across an endless grid." />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png" />
@@ -16,22 +16,22 @@
   </head>
   <body>
     <div id="app">
-      <canvas id="field" aria-label="The grid: your black colony growing across pale soil" role="img"></canvas>
+      <canvas id="field" aria-label="The battlefield: your black territory and coloured rival factions" role="img"></canvas>
 
-      <header id="hud" aria-label="Colony status">
-        <div class="stat" id="stat-pop">
-          <span class="stat-label">Population</span>
-          <span class="stat-value" data-v>1</span>
+      <header id="hud" aria-label="Status">
+        <div class="stat" id="stat-energy">
+          <span class="stat-label">Energy</span>
+          <span class="stat-value" data-v>0</span>
           <span class="stat-rate" data-r>+0/s</span>
         </div>
         <div class="stat" id="stat-territory">
           <span class="stat-label">Territory</span>
-          <span class="stat-value" data-v>0%</span>
-          <span class="stat-rate" data-r>1 cell</span>
+          <span class="stat-value" data-v>0</span>
+          <span class="stat-rate" data-r>+0/s</span>
         </div>
         <div class="stat" id="stat-status">
           <span class="stat-label">Status</span>
-          <span class="stat-value" data-v>Growing</span>
+          <span class="stat-value" data-v>Expanding</span>
           <span class="stat-rate" data-r>Scale 1</span>
         </div>
       </header>
@@ -43,6 +43,9 @@
 
       <section id="controls" aria-label="Simulation controls">
         <button id="pause-btn" class="ctl" type="button" aria-label="Pause"></button>
+        <button id="recenter-btn" class="ctl" type="button" aria-label="Re-centre on your territory" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5" class="fill"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/></svg>
+        </button>
         <div class="seg" id="speed" role="group" aria-label="Simulation speed">
           <button type="button" data-speed="1" aria-pressed="true">1×</button>
           <button type="button" data-speed="2" aria-pressed="false">2×</button>
@@ -52,7 +55,7 @@
 
       <section id="sheet" aria-label="Panel" hidden>
         <div class="sheet-head">
-          <h2 id="sheet-title">Colony</h2>
+          <h2 id="sheet-title">Territory</h2>
           <button class="close" id="sheet-close" type="button" aria-label="Close panel">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
           </button>
@@ -61,17 +64,14 @@
       </section>
 
       <nav id="tabs" aria-label="Main">
-        <button type="button" data-tab="colony">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5" class="fill"/><rect x="13" y="4" width="7" height="7" rx="1.5" class="fill"/><rect x="4" y="13" width="7" height="7" rx="1.5" class="fill"/></svg><span>Colony</span><i class="dot" hidden></i>
+        <button type="button" data-tab="territory">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5" class="fill"/><rect x="13" y="4" width="7" height="7" rx="1.5" class="fill"/><rect x="4" y="13" width="7" height="7" rx="1.5" class="fill"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg><span>Territory</span><i class="dot" hidden></i>
         </button>
-        <button type="button" data-tab="upgrades" data-locked>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/><path d="M5 20h14"/></svg><span>Upgrades</span>
+        <button type="button" data-tab="upgrades">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/><path d="M5 20h14"/></svg><span>Upgrades</span><i class="dot" hidden></i>
         </button>
-        <button type="button" data-tab="mutations" data-locked>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/><path d="M11 7.5h3.5V13"/></svg><span>Mutations</span>
-        </button>
-        <button type="button" data-tab="evolution" data-locked>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 4.5v9L12 21l-7.5-4.5v-9z"/><path d="M12 8v8M8.5 10l7 4M15.5 10l-7 4"/></svg><span>Evolution</span>
+        <button type="button" data-tab="prestige" data-locked>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6-4.5-4.2 6.1-.7z"/></svg><span>Prestige</span>
         </button>
         <button type="button" data-tab="stats">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V12M12 20V5M19 20v-9"/></svg><span>Stats</span>

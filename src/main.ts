@@ -5,6 +5,7 @@ import { SAVE } from './config/balance';
 import { Game } from './game';
 import { load, save, wipe, type StorageLike } from './persist/save';
 import { Renderer } from './render/renderer';
+import { refreshStats } from './sim/faction';
 import { createSettings } from './state';
 import { App } from './ui/app';
 import { installGlobalHandlers, reportError } from './ui/errors';
@@ -28,14 +29,14 @@ function boot() {
   const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   const loaded = load(store);
   const snap = loaded.snapshot;
-  const game = new Game(snap?.sim ?? null, snap?.scale ?? 0, snap?.settings ?? createSettings(prefersReduced), snap?.stats);
+  const game = new Game(snap?.world ?? null, snap?.scale ?? 0, snap?.settings ?? createSettings(prefersReduced), snap?.stats);
 
   let lastSaved = 0;
   // Set while wiping progress, so the unload handler can't write the old game back.
   let resetting = false;
   const doSave = () => {
     if (resetting) return false;
-    const ok = save(store, { sim: game.sim, scale: game.camera.level, settings: game.settings, stats: game.stats }, Date.now());
+    const ok = save(store, { world: game.world, scale: game.camera.level, settings: game.settings, stats: game.stats }, Date.now());
     if (ok) lastSaved = Date.now();
     return ok;
   };
@@ -52,8 +53,8 @@ function boot() {
     save: doSave,
     lastSavedAt: () => lastSaved,
     applySettings,
-    newWorld: (seed) => {
-      game.restart(seed);
+    newRun: () => {
+      game.newRun();
       doSave();
     },
     reset: () => {
@@ -69,6 +70,8 @@ function boot() {
 
   if (loaded.source === 'backup') app.toasts.show('Recovered progress from backup save', 'good');
   else if (loaded.corrupt) app.toasts.show('Save was unreadable — started fresh', 'bad');
+  else if (loaded.outdated) app.toasts.show('Assimilate was redesigned — your old game couldn\u2019t carry over');
+  if (game.world.ended) app.onDefeat();
   app.showIntro();
   doSave();
 
@@ -87,11 +90,11 @@ function boot() {
     last = now;
     if (hidden) return;
     try {
-      // Clamp long stalls: the colony just resumes (offline growth arrives in Phase 8).
+      // Clamp long stalls: the run just resumes (offline progress comes later).
       const dt = Math.min(0.1, raw);
       game.update(dt, now);
       app.frame(dt);
-      renderer.draw(game.camera, game.sim, game.anims, now);
+      renderer.draw(game.camera, game.world, game.anims, now);
       saveTimer += dt;
       if (saveTimer >= SAVE.autosaveSeconds) {
         saveTimer = 0;
@@ -121,7 +124,14 @@ function boot() {
 
   // Test hooks (only with ?debug in the URL).
   if (new URLSearchParams(location.search).has('debug')) {
-    (window as unknown as Record<string, unknown>).__assimilate = { game, app, renderer, save: doSave, store };
+    // grant(factionId, levels): set upgrade levels directly, for tests and experiments.
+    const grant = (id: number, levels: Record<string, number>) => {
+      const f = game.world.factions.get(id);
+      if (!f) return;
+      f.levels = { ...f.levels, ...levels };
+      refreshStats(f);
+    };
+    (window as unknown as Record<string, unknown>).__assimilate = { game, app, renderer, save: doSave, store, grant };
   }
 }
 

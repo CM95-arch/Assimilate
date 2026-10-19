@@ -1,23 +1,26 @@
 # Assimilate
 
-One black square on a white grid. It grows by itself, one cell at a time, following a few
-local rules. Over time it becomes a sprawling organism that, later in development, will compete
-with coloured rival colonies, mutate and evolve across generations.
+An idle territory-conquest game for phones. You are the black territory on an endless white grid.
+Your territory expands on its own, and so do coloured rival factions. You don't move anything by
+hand. You spend energy on upgrades that decide how your territory spreads, how hard it hits, how
+well it holds, and what it goes after. Every rival plays by the same rules with its own build,
+so each border becomes a different fight.
 
-**Current build: 0.1.0, Phase 1 (Living Grid).** The colony grows on procedurally generated
-soil and around rock, with smooth birth animations, soft sounds, automatic zoom-outs, saving,
-statistics and settings. Biomass, upgrades, rivals and the rest of the design arrive in
-later phases. Locked tabs in the game say which phase brings them.
+**Current build: 0.2.0, the first playable version of the territory redesign.** Infinite grid,
+budget-based expansion at about one cell per second, energy, 17 upgrades in five categories, rivals
+with five personalities that appear as you expand, border combat, a camera you can drag and zoom,
+saving, statistics and settings. Prestige, offline progress and the rest of the upgrade list come
+next (see `docs/PHASE_REPORT.md`).
 
 ## Play it on your phone
 
-It's a web app, so any modern phone browser runs it. You don't need an app store or a
-developer account.
+It's a web app, so any modern phone browser runs it. You don't need an app store or a developer
+account.
 
-- **Your own copy:** `npm run build:single` writes `dist/assimilate.html`, a single
-  self-contained file you can host anywhere (GitHub Pages, Netlify Drop, any static host).
-- **Home screen:** in Safari, tap Share → *Add to Home Screen* for a full-screen,
-  portrait, app-like experience. Progress is stored on the device, in that browser.
+- **Your own copy:** `npm run build:single` writes `dist/assimilate.html`, one self-contained file
+  you can host anywhere.
+- **Home screen:** in Safari, tap Share → *Add to Home Screen* for a full-screen, portrait,
+  app-like experience. Progress is stored on the device, in that browser.
 
 Sound starts after your first tap, because browsers require a gesture before playing audio.
 
@@ -30,56 +33,46 @@ npm install        # once
 npm run dev        # start a dev server; it prints a local and a network URL
 ```
 
-Open the printed URL. To try it on your phone while developing, connect the phone to the same
-Wi‑Fi and open the **Network** URL that `npm run dev` prints.
-
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Live-reloading dev server (also reachable from your phone on the same Wi‑Fi) |
 | `npm run build` | Type-check and build the production site into `dist/` |
 | `npm run build:single` | Build, then also write `dist/assimilate.html` as one self-contained file |
-| `npm test` | Unit tests: growth rules, determinism, emergent shape differences, saves, formatting |
+| `npm test` | Unit tests: grid, expansion pace, combat, behaviour upgrades, economy, rivals, saves |
 | `npm run e2e` | Plays the real game in a headless phone browser and taps every screen (run `npm run build` first) |
-| `npm run patterns` | Grows colonies headlessly and prints ASCII maps + shape metrics for several rule presets |
+| `npm run sim` | Plays a run headlessly and prints pacing, rival builds and an ASCII map |
 
-Add `?debug` to the URL to expose `window.__assimilate` for poking at the game from the
-browser console.
+Add `?debug` to the URL to expose `window.__assimilate` in the browser console, including
+`grant(factionId, levels)` for experiments.
 
 ## Tuning the game
 
-Every gameplay number lives in `src/config/balance.ts`: world size, tick rate, terrain,
-growth traits, camera milestones, animation timings, colours, audio limits and save settings.
-After changing values, run `npm run patterns` to see how the colony's shape responds, then
-`npm test`.
+All gameplay numbers live in `src/config/`:
 
-In the game, **Settings → Developer → Rule Lab** lets you change the growth rules live and
-watch the colony respond. It's a development tool and will be replaced by upgrades.
+- `balance.ts`: base faction stats, combat, energy, rival spawning, camera, animation and colours.
+- `upgrades.ts`: every upgrade's cost, unlock point and what it changes.
+- `profiles.ts`: rival personalities (how much each type values each upgrade).
+
+After changing numbers, run `npm run sim` (try `SEED=3 MINUTES=10`, or `BUILD=branching,momentum`)
+and then `npm test`.
 
 ## Project layout
 
 ```
 src/
-  config/      all tunable numbers (balance.ts)
-  sim/         pure simulation, no rendering. Shared by the game, tests and scripts
-    world.ts     flat typed-array grid + active (frontier) cell list
-    terrain.ts   seeded soil fertility and rock
-    growth.ts    the local reproduction rule (the heart of emergence)
-    colony.ts    colony identity, traits and cached totals
-    sim.ts       tick loop, births, restore-from-save, cache audit
-    metrics.ts   shape measurements (edge ratio, tips, fill)
-    rng.ts       seeded random numbers
-  render/      canvas drawing (camera, batched blocks, birth animation)
-  audio/       synthesized sounds (no audio files)
+  config/      tunable numbers: balance, upgrades, rival profiles
+  sim/         pure simulation shared by the game, tests and scripts (no rendering)
+    grid.ts       infinite chunked grid + key sets
+    faction.ts    a faction: levels → stats, energy, territory caches
+    expansion.ts  the rules: target scoring and conversion chance (where emergence comes from)
+    world.ts      tick loop, captures, elimination, rival spawning, rival shopping, dormancy
+    economy.ts    prices, unlocks, purchases (shared by you and rivals)
+    rng.ts        seeded random numbers
+  render/      camera (follow, milestones, pan/zoom), batched drawing, capture animations
+  audio/       synthesized sounds
   persist/     versioned saves with backup and recovery
-  ui/          HUD, controls, tabs/panels, dialogs, diagnostics overlay
-  game.ts      live controller: fixed tick clock, speed, zoom milestones, events
+  ui/          HUD, controls, panels, dialogs, error card, diagnostics
+  game.ts      live controller: tick clock, events → effects/notices, camera framing
   main.ts      boot, loop, autosave, pause when hidden
-tests/         unit tests (Vitest)
-e2e/           browser test script (Playwright)
-scripts/       pattern preview, single-file build, icon renderer
-docs/          design decisions and phase report
+tests/ e2e/ scripts/ docs/
 ```
-
-See `docs/DESIGN_DECISIONS.md` for the engine choice, architecture, the open questions and
-the defaults used. `docs/PHASE_REPORT.md` covers what was built, how it was tested and what
-comes next.

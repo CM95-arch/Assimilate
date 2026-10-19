@@ -1,7 +1,7 @@
 {
   "name": "assimilate",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
@@ -9,7 +9,7 @@
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "patterns": "vite-node scripts/patterns.ts",
+    "sim": "vite-node scripts/sim.ts",
     "e2e": "node e2e/run.mjs",
     "build:single": "npm run build && node scripts/single-file.mjs"
   },

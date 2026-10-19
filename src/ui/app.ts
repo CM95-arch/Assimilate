@@ -3,34 +3,35 @@
 import type { Game } from '../game';
 import type { Rect } from '../render/camera';
 import type { Renderer } from '../render/renderer';
-import { fmt, fmtPct } from '../util/format';
+import { anyAffordable } from '../sim/economy';
+import { fmt, fmtDuration } from '../util/format';
 import type { Panel, UiContext } from './context';
 import { h, setAttr, setText, svg } from './dom';
 import { reportError } from './errors';
 import { Banner, closeTopModal, modalOpen, openModal, Tip, Toasts } from './overlay';
-import { colonyPanel } from './panels/colony';
-import { evolutionPanel, mutationsPanel, upgradesPanel } from './panels/locked';
+import { prestigePanel } from './panels/prestige';
 import { settingsPanel } from './panels/settings';
 import { statsPanel } from './panels/stats';
+import { territoryPanel } from './panels/territory';
+import { upgradesPanel } from './panels/upgrades';
+import { PROFILE_BY_ID } from '../config/profiles';
 
 const PANELS: Record<string, Panel> = {
-  colony: colonyPanel,
+  territory: territoryPanel,
   upgrades: upgradesPanel,
-  mutations: mutationsPanel,
-  evolution: evolutionPanel,
+  prestige: prestigePanel,
   stats: statsPanel,
   settings: settingsPanel,
 };
 
 const ICON_PAUSE = '<rect x="6.5" y="5" width="3.5" height="14" rx="1" class="fill"/><rect x="14" y="5" width="3.5" height="14" rx="1" class="fill"/>';
 const ICON_PLAY = '<path d="M8 5.5v13l10.5-6.5z" class="fill"/>';
-const DIRS = ['↑', '→', '↓', '←', '↗', '↘', '↙', '↖'];
 
 export interface AppHooks {
   save: () => boolean;
   lastSavedAt: () => number;
   applySettings: () => void;
-  newWorld: (seed?: number) => void;
+  newRun: () => void;
   reset: () => void;
 }
 
@@ -44,10 +45,11 @@ export class App {
   private readonly tabs = [...document.querySelectorAll<HTMLButtonElement>('#tabs button')];
   private readonly pauseBtn = document.getElementById('pause-btn') as HTMLButtonElement;
   private readonly speedBtns = [...document.querySelectorAll<HTMLButtonElement>('#speed button')];
+  private readonly recenterBtn = document.getElementById('recenter-btn') as HTMLButtonElement;
   private readonly diag = document.getElementById('diag')!;
   private readonly hud = {
-    popV: document.querySelector('#stat-pop [data-v]')!,
-    popR: document.querySelector('#stat-pop [data-r]')!,
+    enV: document.querySelector('#stat-energy [data-v]')!,
+    enR: document.querySelector('#stat-energy [data-r]')!,
     terV: document.querySelector('#stat-territory [data-v]')!,
     terR: document.querySelector('#stat-territory [data-r]')!,
     status: document.getElementById('stat-status')!,
@@ -60,6 +62,8 @@ export class App {
   /** Smoothly animated playfield rect (it shrinks when a panel opens). */
   private play: Rect = { x: 0, y: 0, w: 1, h: 1 };
   private playTarget: Rect = { x: 0, y: 0, w: 1, h: 1 };
+  private refSize = 1;
+  private controlsH = 64;
   readonly ctx: UiContext;
 
   constructor(private readonly game: Game, private readonly renderer: Renderer, private readonly hooks: AppHooks) {
@@ -69,10 +73,10 @@ export class App {
       save: hooks.save,
       lastSavedAt: hooks.lastSavedAt,
       applySettings: hooks.applySettings,
-      confirmNewWorld: () => this.confirmWorld(false),
-      confirmReplay: () => this.confirmWorld(true),
+      confirmNewRun: () => this.confirmNewRun(),
       confirmReset: () => this.confirmReset(),
       rerender: () => this.openTab && this.renderPanel(this.openTab),
+      memory: {},
     };
     for (const b of this.tabs) {
       if (b.hasAttribute('data-locked')) b.append(svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>', 'lockmark'));
@@ -93,6 +97,11 @@ export class App {
         hooks.save();
       });
     }
+    this.recenterBtn.addEventListener('click', () => {
+      game.camera.recenter();
+      game.audio.click();
+    });
+    this.bindCameraGestures();
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         if (!closeTopModal() && this.openTab) this.closeSheet();
@@ -114,11 +123,18 @@ export class App {
     document.documentElement.style.setProperty('--play-top', `${hudB}px`);
     const controlsH = this.openTab ? 0 : document.getElementById('controls')!.getBoundingClientRect().height;
     const sheetH = this.openTab ? this.sheet.getBoundingClientRect().height : 0;
+    document.documentElement.style.setProperty('--sheet-px', `${sheetH}px`);
     const bottom = H - navH - Math.max(controlsH, sheetH);
     const pad = 6;
     this.playTarget = { x: pad, y: hudB, w: W - pad * 2, h: Math.max(60, bottom - hudB) };
     if (snap) this.play = { ...this.playTarget };
-    this.renderer.resize(W, H, this.play);
+    // Zoom reference: the battlefield's narrow side as if no panel were open.
+    // The controls bar is hidden while a panel is open, so remember its height from when it showed.
+    const ctlH = document.getElementById('controls')!.getBoundingClientRect().height;
+    if (ctlH > 0) this.controlsH = ctlH;
+    const fullH = H - navH - this.controlsH - hudB;
+    this.refSize = Math.min(W - pad * 2, Math.max(60, fullH));
+    this.renderer.resize(W, H, this.play, this.refSize);
   }
 
   private syncControls() {
@@ -138,7 +154,7 @@ export class App {
   openSheet(tab: string) {
     this.openTab = tab;
     for (const b of this.tabs) setAttr(b, 'aria-current', b.dataset.tab === tab ? 'page' : null);
-    if (tab === 'colony') this.tabs[0].querySelector('.dot')?.setAttribute('hidden', '');
+    if (tab === 'territory') this.tabs[0].querySelector('.dot')?.setAttribute('hidden', '');
     this.sheet.hidden = false;
     document.body.classList.add('sheet-open');
     this.renderPanel(tab);
@@ -169,23 +185,69 @@ export class App {
     this.layout();
   }
 
-  private confirmWorld(replay: boolean) {
-    const seed = this.game.sim.seed;
+  private confirmNewRun() {
     openModal({
-      id: replay ? 'confirm-replay' : 'confirm-new',
-      title: replay ? 'Replay this world?' : 'Start a new world?',
-      lead: replay
-        ? `Your colony restarts from a single cell on the same terrain (seed ${seed}). Lifetime statistics are kept.`
-        : 'A new terrain is generated and your colony restarts from a single cell. Lifetime statistics are kept.',
+      id: 'confirm-new',
+      title: 'Start a new run?',
+      lead: 'Your territory, energy and upgrades for this run are lost, and a new world begins. Lifetime statistics are kept.',
       actions: [
-        { label: replay ? 'Replay' : 'New world', kind: 'primary', id: 'confirm', onClick: () => {
-          this.hooks.newWorld(replay ? seed : undefined);
-          this.closeSheet();
-          this.banner.show(replay ? 'Replaying' : 'New world', `Seed ${this.game.sim.seed}`);
-        } },
+        { label: 'New run', kind: 'primary', id: 'confirm', onClick: () => this.startNewRun() },
         { label: 'Cancel', kind: 'ghost', id: 'cancel' },
       ],
     });
+  }
+
+  private startNewRun() {
+    this.hooks.newRun();
+    this.closeSheet();
+    this.banner.show('New run', 'A fresh world');
+    this.refreshHud();
+  }
+
+  /** Drag to pan, pinch or scroll to zoom. Any manual move pauses following until re-centred. */
+  private bindCameraGestures() {
+    const canvas = document.getElementById('field') as HTMLCanvasElement;
+    const pts = new Map<number, { x: number; y: number }>();
+    let pinch = 0;
+    const cam = () => this.game.camera;
+    canvas.addEventListener('pointerdown', (e) => {
+      canvas.setPointerCapture?.(e.pointerId);
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        pinch = Math.hypot(a.x - b.x, a.y - b.y);
+      }
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      const prev = pts.get(e.pointerId);
+      if (!prev) return;
+      const pitch = cam().pitch(this.renderer.refSize);
+      if (pts.size === 1) {
+        const dx = e.clientX - prev.x;
+        const dy = e.clientY - prev.y;
+        if (Math.abs(dx) + Math.abs(dy) > 0) cam().panBy(-dx / pitch, -dy / pitch);
+      }
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2 && pinch > 0) {
+        const [a, b] = [...pts.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        const mid = this.renderer.screenToCell(cam(), (a.x + b.x) / 2, (a.y + b.y) / 2);
+        cam().follow = false;
+        cam().zoomAround(d / pinch, mid.x, mid.y);
+        pinch = d;
+      }
+    });
+    const end = (e: PointerEvent) => {
+      pts.delete(e.pointerId);
+      if (pts.size < 2) pinch = 0;
+    };
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const at = this.renderer.screenToCell(cam(), e.clientX, e.clientY);
+      cam().zoomAround(Math.exp(-e.deltaY * 0.0015), at.x, at.y);
+    }, { passive: false });
   }
 
   private confirmReset() {
@@ -193,7 +255,7 @@ export class App {
     const m = openModal({
       id: 'confirm-reset',
       title: 'Reset all progress?',
-      lead: 'This deletes your colony, statistics and settings on this device. It cannot be undone.',
+      lead: 'This deletes your current run, statistics and settings on this device. It cannot be undone.',
       body: [h('label', { class: 'check', for: 'reset-check' }, check, h('span', { text: 'I understand everything will be deleted' }))],
       actions: [
         { label: 'Delete everything', kind: 'danger', id: 'confirm', disabled: true, onClick: () => this.hooks.reset() },
@@ -208,7 +270,7 @@ export class App {
 
   showIntro() {
     if (this.game.settings.introSeen) return;
-    this.tip.show('This is your colony. It grows on its own: every cell follows a few simple local rules. Watch what shapes appear.', () => {
+    this.tip.show('You are black. Your territory expands on its own, and so do your rivals. Spend energy on Upgrades to decide how it spreads and fights.', () => {
       this.game.settings.introSeen = true;
       this.hooks.save();
     });
@@ -227,12 +289,9 @@ export class App {
       p.y += (t.y - p.y) * k;
       p.h += (t.h - p.h) * k;
       if (Math.abs(p.h - t.h) <= 0.5) Object.assign(p, t);
-      this.renderer.resize(window.innerWidth, window.innerHeight, p);
+      this.renderer.resize(window.innerWidth, window.innerHeight, p, this.refSize);
     }
-    for (const e of this.game.events.splice(0)) {
-      if (e.type === 'scale') this.banner.show(`Scale ${e.level + 1}`, 'The world widens');
-      else if (e.type === 'filled') this.onFilled();
-    }
+    for (const e of this.game.events.splice(0)) this.onEvent(e);
     this.refreshTimer += dt;
     if (this.refreshTimer < 0.2) return;
     this.refreshTimer = 0;
@@ -247,32 +306,67 @@ export class App {
     this.refreshDiag();
   }
 
-  private onFilled() {
-    this.tabs[0].querySelector('.dot')?.removeAttribute('hidden');
+  private onEvent(e: Game['events'][number]) {
+    const w = this.game.world;
+    const name = (id: number) => {
+      const f = w.factions.get(id);
+      return f ? `${f.name} (${PROFILE_BY_ID[f.profile]?.name ?? 'Rival'})` : 'A rival';
+    };
+    switch (e.type) {
+      case 'scale':
+        this.banner.show(`Scale ${e.level + 1}`, 'The view widens');
+        break;
+      case 'contact':
+        this.toasts.show(`Contact: ${name(e.faction)}`);
+        this.tabs[0].querySelector('.dot')?.removeAttribute('hidden');
+        break;
+      case 'spawn':
+        if (w.time > 1) this.toasts.show(`New rival found: ${name(e.faction)}`);
+        break;
+      case 'eliminated':
+        this.toasts.show(`${name(e.faction)} eliminated${e.byPlayer ? ' by you' : ''}`, e.byPlayer ? 'good' : 'info');
+        break;
+      case 'defeat':
+        this.onDefeat();
+        break;
+    }
+  }
+
+  onDefeat() {
+    const w = this.game.world;
+    const p = w.player;
     openModal({
-      id: 'filled',
-      title: 'Every reachable cell is alive',
-      lead: `Your colony filled its world with ${fmt(this.game.sim.player.population)} cells. In later builds, biomass, rivals and evolution give it reasons to stop, fight and change. For now, start a new world to watch another one grow.`,
-      actions: [
-        { label: 'New world', kind: 'primary', id: 'new', onClick: () => this.hooks.newWorld() },
-        { label: 'Keep watching', kind: 'ghost', id: 'stay' },
-      ],
+      id: 'defeat',
+      title: 'Your territory has fallen',
+      lead: `You held up to ${fmt(p.peakCells)} cells over ${fmtDuration(w.time)}. Prestige rewards for finished runs arrive in a later update; for now, start a new run.`,
+      body: [h('dl', { class: 'kv' },
+        h('dt', { text: 'Open cells claimed' }), h('dd', { text: fmt(p.claimed) }),
+        h('dt', { text: 'Enemy cells converted' }), h('dd', { text: fmt(p.converted) }),
+        h('dt', { text: 'Energy earned' }), h('dd', { text: fmt(p.earned) }),
+      )],
+      dismissible: false,
+      actions: [{ label: 'Start a new run', kind: 'primary', id: 'new', onClick: () => this.startNewRun() }],
     });
   }
 
   refreshHud() {
     const g = this.game;
-    const c = g.sim.player;
-    setText(this.hud.popV, fmt(c.population));
-    const r = g.sim.birthRate();
-    setText(this.hud.popR, `+${r < 10 ? r.toFixed(1) : fmt(r)}/s`);
-    const share = g.sim.territoryFraction();
-    setText(this.hud.terV, share > 0 && share < 0.01 ? '<1%' : fmtPct(share));
-    setText(this.hud.terR, `${fmt(c.population)} of ${fmt(g.sim.openCells)}`);
+    const w = g.world;
+    const p = w.player;
+    setText(this.hud.enV, fmt(p.energy));
+    setText(this.hud.enR, `+${fmt(Math.max(0, w.energyRate()))}/s`);
+    setText(this.hud.terV, fmt(p.cells));
+    const cr = w.cellRate();
+    setText(this.hud.terR, `${cr >= 0 ? '+' : '−'}${Math.abs(cr) < 10 ? Math.abs(cr).toFixed(1) : fmt(Math.abs(cr))}/s`);
     const st = g.status();
     setText(this.hud.stV, st);
-    setText(this.hud.stR, `Scale ${g.camera.level + 1} · ${g.paused ? 'paused' : `${g.speed}×`}`);
-    this.hud.status.classList.toggle('filled', st === 'Filled');
+    const rivals = w.contacts().length;
+    setText(this.hud.stR, `${rivals ? `${rivals} front${rivals > 1 ? 's' : ''}` : `Scale ${g.camera.level + 1}`} · ${g.paused ? 'paused' : `${g.speed}×`}`);
+    this.hud.status.classList.toggle('war', st === 'At war');
+    this.hud.status.classList.toggle('losing', st === 'Losing ground');
+    this.hud.status.classList.toggle('defeated', st === 'Defeated');
+    this.tabs[1].querySelector('.dot')?.toggleAttribute('hidden', !anyAffordable(p));
+    this.recenterBtn.hidden = !g.camera.adjusted;
   }
 
   private refreshDiag() {
@@ -280,24 +374,16 @@ export class App {
     const on = g.settings.diagnostics;
     this.diag.hidden = !on;
     if (!on) return;
-    const s = g.sim;
-    const w = s.world;
-    s.traceNext = true;
-    const tr = s.lastTrace;
-    let trace = 'decision: —';
-    if (tr) {
-      const x = tr.cell % w.width;
-      const y = (tr.cell / w.width) | 0;
-      trace = `decision @${x},${y}: ${tr.success ? 'divided' : 'failed'}\n` +
-        tr.options.map((o, k) => ` ${k === tr.chosen ? '▸' : ' '}${DIRS[o.dir]} pick ${(o.weight * 100).toFixed(0).padStart(3)}%  ok ${(o.accept * 100).toFixed(0).padStart(3)}%`).join('\n');
-    }
-    setText(this.diag, [
+    const w = g.world;
+    const lines = [
       `fps ${this.fps.toFixed(0)}  draw ${this.renderer.info.drawMs.toFixed(1)}ms  cells ${this.renderer.info.cellsDrawn}`,
-      `tick ${s.tick}  ${g.tickRate.toFixed(1)}/s  ${g.tickMs.toFixed(2)}ms`,
-      `population ${s.player.population}  frontier ${w.activeCount}`,
-      `births ${s.birthRate().toFixed(1)}/s  anims ${g.anims.count}`,
-      `seed ${s.seed}  view ${g.camera.cells.toFixed(0)} cells`,
-      trace,
-    ].join('\n'));
+      `tick ${w.tick}  ${g.tickRate.toFixed(1)}/s  ${g.tickMs.toFixed(2)}ms  chunks ${w.grid.chunks.size}`,
+      `view ${g.camera.cells.toFixed(0)} cells  anims ${g.anims.count}`,
+    ];
+    for (const f of w.factions.values()) {
+      if (!f.alive) continue;
+      lines.push(`${f.name.padEnd(6)} ${String(f.cells).padStart(6)} border ${String(f.frontier.size).padStart(5)} ${w.isDormant(f) ? 'dormant' : ''}`);
+    }
+    setText(this.diag, lines.join('\n'));
   }
 }
