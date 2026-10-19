@@ -6,9 +6,9 @@ hand. Behaviour sliders decide what your territory goes after, and energy buys u
 it stronger. Every rival plays by the same rules with its own settings and build, so each border
 becomes a different fight.
 
-**Current build: 0.2.6.** Infinite grid, expansion that starts at about one cell every 3
-seconds and speeds up gently over 12 minutes, energy, four behaviour sliders, 17 upgrades in
-four categories (including Veins, Outposts, Chain Reaction, Siege, Counterattack, Tribute and
+**Current build: 0.2.7.** Infinite grid, expansion that starts at about one cell every 3
+seconds and speeds up gently over 12 minutes, energy, four behaviour sliders, 16 upgrades in
+four categories (including Outposts, Chain Reaction, Siege, Counterattack, Tribute and
 Capital), rivals
 with five personalities that appear as you expand, border combat, a camera you can drag and zoom,
 saving, statistics and settings. Prestige, offline progress and the rest of the upgrade list come
@@ -70,7 +70,6 @@ src/
     faction.ts    a faction: levels → stats, energy, territory caches
     expansion.ts  the rules: target scoring and conversion chance (where emergence comes from)
     world.ts      tick loop, captures, elimination, rival spawning, rival shopping, dormancy
-    veins.ts      pulses from the capital to weak spots (distance field, targets, boost zones)
     economy.ts    prices, unlocks, purchases (shared by you and rivals)
     rng.ts        seeded random numbers
   render/      camera (follow, milestones, pan/zoom), batched drawing, capture animations

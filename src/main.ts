@@ -94,7 +94,7 @@ function boot() {
       const dt = Math.min(0.1, raw);
       game.update(dt, now);
       app.frame(dt);
-      renderer.draw(game.camera, game.world, game.anims, now, game.simTime());
+      renderer.draw(game.camera, game.world, game.anims, now);
       saveTimer += dt;
       if (saveTimer >= SAVE.autosaveSeconds) {
         saveTimer = 0;

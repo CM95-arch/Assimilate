@@ -47,7 +47,7 @@ export const settingsPanel: Panel = {
       h('p', { class: 'section-title', text: 'Run' }),
       row('New run', 'Start over in a new world. Lifetime statistics are kept.', h('button', { class: 'btn', type: 'button', 'data-action': 'new-run', text: 'New run…', on: { click: () => ctx.confirmNewRun() } })),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', type: 'button', 'data-action': 'reset', text: 'Reset all progress…', on: { click: () => ctx.confirmReset() } })),
-      h('p', { class: 'note', style: 'margin-top:14px', text: 'Assimilate · build 0.2.6' }),
+      h('p', { class: 'note', style: 'margin-top:14px', text: 'Assimilate · build 0.2.7' }),
     );
   },
   refresh(ctx, root) {

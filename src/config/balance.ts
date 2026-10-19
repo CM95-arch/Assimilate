@@ -61,7 +61,6 @@ export const BASE_STATS = {
   counter: 0,
   tribute: 0,
   capital: 0,
-  veins: 0,
 };
 
 /**
@@ -84,27 +83,6 @@ export const SPECIAL = {
   siegePocketCells: 150,
   /** Capital protection fades to nothing at this distance (cells) from home. */
   capitalRadius: 7,
-  /**
-   * Veins (pulses): pulses travel through territory over a coarse grid of blocks this many cells
-   * wide. A block carries pulses only if the faction holds at least `veinBlockMin` of its cells.
-   */
-  veinBlock: 4,
-  veinBlockMin: 6,
-  /** Huge territories use doubled blocks until there are at most this many (keeps it cheap). */
-  veinMaxBlocks: 1500,
-  /** Border cells examined when looking for weak spots. */
-  veinSample: 600,
-  /** Seconds between pulses at level 1, the reduction per level, and the floor. */
-  pulseInterval: 14,
-  pulseIntervalPerLevel: 0.8,
-  pulseIntervalMin: 6,
-  /** How fast a pulse travels through territory (cells per second). */
-  pulseSpeed: 24,
-  /** The boost a pulse delivers: radius (cells) around the weak spot and how long it lasts (s). */
-  pulseRadius: 7,
-  pulseSeconds: 10,
-  /** Weak spots chosen per pulse are kept at least this far apart (cells). */
-  pulseSpread: 14,
 };
 
 export const COMBAT = {

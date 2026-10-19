@@ -70,13 +70,12 @@ the behaviour stats.
 
 A rival's sliders come from its personality plus a random ±0.3 twist each.
 
-**Upgrades (17):**
+**Upgrades (16):**
 - **Expansion:** Expansion Rate; Outposts (some attempts plant a cell 3–5 squares beyond the
   border, on clear open ground, with a ring effect); Coordination (more border sampled per
   attempt, so slider settings are followed more precisely).
 - **Combat:** Conversion Power; Pressure; Chain Reaction (a conversion may flip a neighbouring
-  cell of the same enemy, up to 6 links, each 40% less likely, popping as a cascade); Veins
-  (pulses, see below); Siege
+  cell of the same enemy, up to 6 links, each 40% less likely, popping as a cascade); Siege
   (enemy groups under 150 cells and under half their faction lose resistance).
 - **Defense:** Resistance; Reinforcement; Entrenchment; Counterattack (a failed attack on you
   may be answered at once against the attacking cell); Capital (resistance bonus up to
@@ -88,25 +87,11 @@ The four starters are available from the first second. The rest unlock as you ea
 during the run, and rivals follow the same unlock rule. New upgrades will be chosen from the
 creative list in the phase report.
 
-## Veins: pulses (0.2.6)
+## Veins removed (0.2.7)
 
-There are no lines on screen. Every 14 s at level 1, falling to 6 s at level 10, the capital sends
-a pulse through the faction's own territory. Its targets are the weak spots: border cells with
-little friendly ground around them (spread thin) and enemy ground close by or touching (being
-surrounded), favouring ones far from home. It aims at 1 spot, plus 1 more per 4 levels, kept at
-least 14 cells apart. The wave travels at 24 cells/s by distance along the territory. Distance is
-a cheapest-path search over 4×4 blocks, using per-block tallies kept current on every capture, so
-the wave flows around gaps and can't reach cut-off regions. On arrival, the spot and everything
-within 7 cells gets +(15% + 7% per level) power and resistance for 10 s.
-
-**What you see:** a soft lighter band rolls out from the capital. It is faint across the whole
-territory and brighter along the routes to the weak spots. Each spot flashes when the pulse
-arrives, then glows while boosted. Rival pulses use a pale shade of the rival's colour.
-
-**Cost control:** only your own pulses force full-frame-rate redraws, while in flight and during
-the arrival flash. Rival pulses advance with the game ticks. Each pulse keeps its blocks sorted
-by distance, so drawing only visits the band in motion. Zoomed out, fully held blocks are tinted
-as single rectangles.
+Veins went through two versions: a visible supply network of lines, then pulses rolling from the
+capital to weak spots. Neither added a decision or a feeling of control in playtesting, so it was
+removed. Saves that owned it simply drop the level on load.
 
 ## Pace (0.2.4)
 

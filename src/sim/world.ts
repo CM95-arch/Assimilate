@@ -9,7 +9,6 @@ import { chooseTarget, conversionChance, groupSize, type Candidate, type Context
 import { centroid, createFaction, radius, refreshStats, type Faction } from './faction';
 import { cellKey, DX, DY, Grid, keyX, keyY, NEUTRAL } from './grid';
 import { Rng } from './rng';
-import { adjustBlock, launchPulse, nextPulseDelay, pulseMult } from './veins';
 
 export const PLAYER = 1;
 
@@ -21,7 +20,6 @@ export type SimEvent =
   | { type: 'hit'; x: number; y: number; by: number; owner: number }
   | { type: 'spawn'; faction: number }
   | { type: 'eliminated'; faction: number; by: number }
-  | { type: 'pulse'; faction: number; x: number; y: number }
   | { type: 'defeat' };
 
 const DT = 1 / TIME.ticksPerSecond;
@@ -86,7 +84,6 @@ export class World {
     const k = cellKey(x, y);
     if (from !== NEUTRAL) {
       const f = this.factions.get(from)!;
-      adjustBlock(f, x, y, -1);
       f.cells--;
       f.sumX -= x;
       f.sumY -= y;
@@ -95,7 +92,6 @@ export class World {
     }
     if (to !== NEUTRAL) {
       const f = this.factions.get(to)!;
-      adjustBlock(f, x, y, 1);
       f.cells++;
       f.sumX += x;
       f.sumY += y;
@@ -303,11 +299,8 @@ export class World {
     }
     const tempo = this.tempo();
     this.pocketMemo.clear();
-    // At most one faction launches a pulse per tick, so the work never bunches up.
-    let launches = 1;
     for (const f of order) {
       if (!f.alive) continue;
-      if (f.stats.veins > 0) this.tickPulses(f, now, launches-- > 0);
       if (f.stats.tribute > 0) this.earn(f, (f.stats.tribute * f.cells / 100) * DT);
       f.budget += f.stats.rate * tempo * (1 + f.stats.sizeBonus * Math.sqrt(f.cells)) * DT;
       if (f.budget < 1) continue;
@@ -344,7 +337,7 @@ export class World {
       return;
     }
     const def = this.factions.get(t.owner)!;
-    const p = conversionChance(this.grid, f.stats, f.id, def.stats, def.id, t.x, t.y, ctx.now, this.resistMult(f, def, t.x, t.y), this.powerMult(f, t.sx, t.sy));
+    const p = conversionChance(this.grid, f.stats, f.id, def.stats, def.id, t.x, t.y, ctx.now, this.resistMult(f, def, t.x, t.y));
     this.grid.markHit(t.x, t.y, ctx.now);
     if (this.rng.next() >= p) {
       this.emit({ type: 'hit', x: t.x, y: t.y, by: f.id, owner: def.id });
@@ -380,7 +373,7 @@ export class World {
 
   /** Attempt to convert (x, y) held by `def` for `att` (used by counterattacks). */
   private conquer(att: Faction, def: Faction, x: number, y: number, now: number, kind: CaptureKind, link: number) {
-    const p = conversionChance(this.grid, att.stats, att.id, def.stats, def.id, x, y, now, this.resistMult(att, def, x, y), this.powerMult(att, x, y));
+    const p = conversionChance(this.grid, att.stats, att.id, def.stats, def.id, x, y, now, this.resistMult(att, def, x, y));
     this.grid.markHit(x, y, now);
     if (this.rng.next() < p) this.convert(att, def, x, y, kind, link);
     else this.emit({ type: 'hit', x, y, by: att.id, owner: def.id });
@@ -406,34 +399,7 @@ export class World {
       m *= 1 + def.stats.capital * Math.max(0, 1 - d / SPECIAL.capitalRadius);
     }
     if (att.stats.siege > 0 && this.isPocket(def, x, y)) m *= Math.max(0.2, 1 - att.stats.siege);
-    if (def.stats.veins > 0) m *= pulseMult(def, x, y, this.time);
     return m;
-  }
-
-  /** Attack multiplier for `att` striking from its cell at (sx, sy): boosted where a pulse landed. */
-  powerMult(att: Faction, sx: number, sy: number): number {
-    return att.stats.veins > 0 ? pulseMult(att, sx, sy, this.time) : 1;
-  }
-
-  /** Veins: launch pulses on schedule, turn arrivals into boost zones, drop expired zones. */
-  private tickPulses(f: Faction, now: number, mayLaunch: boolean) {
-    if (f.zones.length) f.zones = f.zones.filter((z) => z.until > now);
-    const p = f.pulse;
-    if (p) {
-      for (const t of p.targets) {
-        if (t.done || now < t.arrive) continue;
-        t.done = true;
-        f.zones.push({ x: t.x, y: t.y, start: now, until: now + SPECIAL.pulseSeconds });
-        this.emit({ type: 'pulse', faction: f.id, x: t.x, y: t.y });
-      }
-      // Keep the pulse (for drawing) until its wave has rolled past the far edge.
-      if (now > p.start + p.maxDist / SPECIAL.pulseSpeed + 1) f.pulse = null;
-    }
-    if (!f.pulse && now >= f.nextPulseAt && mayLaunch) {
-      f.pulse = launchPulse(this.grid, f, now, this.rng);
-      // First pulse comes a few seconds after buying; later ones on the level's interval.
-      f.nextPulseAt = now + (f.nextPulseAt === 0 ? 3 : nextPulseDelay(f)) * (0.9 + this.rng.next() * 0.2);
-    }
   }
 
   /** True if (x, y) belongs to a small group cut off from most of its faction. */
@@ -551,12 +517,10 @@ export class World {
       f.sumX = 0;
       f.sumY = 0;
       f.frontier.clear();
-      f.blockStats.clear();
     }
     this.grid.forEachOwned((x, y, o) => {
       const f = this.factions.get(o);
       if (!f) return;
-      adjustBlock(f, x, y, 1);
       f.cells++;
       f.sumX += x;
       f.sumY += y;
@@ -588,9 +552,6 @@ export class World {
     for (const f of this.factions.values()) {
       if ((counts.get(f.id) ?? 0) !== f.cells) problems.push(`${f.name}: cells cache ${f.cells} ≠ grid ${counts.get(f.id) ?? 0}`);
       if ((front.get(f.id) ?? 0) !== f.frontier.size) problems.push(`${f.name}: frontier size ${f.frontier.size} ≠ ${front.get(f.id) ?? 0}`);
-      let blockCells = 0;
-      for (const [n] of f.blockStats.values()) blockCells += n;
-      if (blockCells !== f.cells) problems.push(`${f.name}: block tallies ${blockCells} ≠ cells ${f.cells}`);
     }
     return problems;
   }
