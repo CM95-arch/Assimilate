@@ -1,10 +1,14 @@
-// Rival personalities: how much each kind of rival values each upgrade.
-// Every rival also gets its own random twist on these weights, so no two play alike.
+// Rival personalities: where each kind of rival sets its behaviour sliders and how much it
+// values each upgrade. Every rival also gets its own random twist on both, so no two play alike.
+
+import type { Behavior } from './upgrades';
 
 export interface Profile {
   id: string;
   name: string;
   summary: string;
+  /** Behaviour slider positions (−1…+1) before the personal twist. */
+  behavior: Behavior;
   /** Relative appetite for each upgrade id (missing = 0.3). */
   weights: Record<string, number>;
 }
@@ -12,23 +16,28 @@ export interface Profile {
 export const PROFILES: Profile[] = [
   {
     id: 'expander', name: 'Rapid Expander', summary: 'Fast growth, weak conversions, low resistance.',
-    weights: { rate: 3, branching: 1.6, momentum: 1.4, yield: 1.6, targeting: 0.8, power: 0.4, resistance: 0.3, consolidation: 0.1 },
+    behavior: { focus: -0.6, shape: 0.7, reach: 0.6, posture: 0 },
+    weights: { rate: 3, yield: 1.8, targeting: 0.8, power: 0.5, resistance: 0.3, efficiency: 0.6 },
   },
   {
     id: 'fortress', name: 'Fortress', summary: 'Slow growth, high resistance, strong reinforcement.',
-    weights: { resistance: 3, reinforcement: 2.2, entrenchment: 2, consolidation: 1.8, recovery: 1, threat: 1, rate: 0.6, branching: 0.05, aggression: 0.1 },
+    behavior: { focus: -0.3, shape: -0.8, reach: -0.5, posture: -0.8 },
+    weights: { resistance: 3, reinforcement: 2.2, entrenchment: 2, rate: 0.6, yield: 0.8, power: 0.3 },
   },
   {
     id: 'conqueror', name: 'Conqueror', summary: 'Strong conversions and aggressive pushes, weaker economy.',
-    weights: { power: 3, aggression: 2, pressure: 1.8, conquestBonus: 1.6, flanking: 0.8, rate: 1, yield: 0.3, efficiency: 0.1 },
+    behavior: { focus: 0.8, shape: -0.2, reach: 0.3, posture: 0.4 },
+    weights: { power: 3, pressure: 1.8, conquestBonus: 1.6, rate: 1, yield: 0.3, efficiency: 0.1 },
   },
   {
     id: 'opportunist', name: 'Opportunist', summary: 'Moderate strength; hunts weak points and exposed borders.',
-    weights: { flanking: 2.6, targeting: 1.8, threat: 1, power: 1.4, rate: 1.4, recovery: 1, pressure: 1 },
+    behavior: { focus: 0.3, shape: 0.2, reach: 0, posture: 0.9 },
+    weights: { targeting: 2, power: 1.4, rate: 1.4, pressure: 1, conquestBonus: 0.8, yield: 0.8 },
   },
   {
     id: 'balanced', name: 'Balanced', summary: 'No extreme specialisation; generally reliable.',
-    weights: { rate: 1.6, power: 1.4, resistance: 1.4, yield: 1.2, reinforcement: 0.8, conquestBonus: 0.7, consolidation: 0.6, threat: 0.6 },
+    behavior: { focus: 0, shape: 0, reach: 0, posture: 0 },
+    weights: { rate: 1.6, power: 1.4, resistance: 1.4, yield: 1.2, reinforcement: 0.8, conquestBonus: 0.7 },
   },
 ];
 

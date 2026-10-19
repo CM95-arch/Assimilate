@@ -1,4 +1,4 @@
-// Territory: your faction's numbers and build, and every rival you know about.
+// Territory: your behaviour sliders, your numbers and build, and every rival you know about.
 
 import { PROFILE_BY_ID } from '../../config/profiles';
 import { UPGRADE_BY_ID } from '../../config/upgrades';
@@ -6,6 +6,7 @@ import { centroid, radius, type Faction } from '../../sim/faction';
 import type { World } from '../../sim/world';
 import { fmt } from '../../util/format';
 import type { Panel, UiContext } from '../context';
+import { behaviorControls, styleSummary } from '../behavior';
 import { h, setText } from '../dom';
 
 function attemptsPerSecond(f: Faction) {
@@ -53,6 +54,7 @@ function rivalList(ctx: UiContext): HTMLElement {
       h('span', { class: 'swatch', style: `background:${f.color}` }),
       h('div', { class: 'rival-info' },
         h('h3', {}, `${f.name} `, h('span', { class: 'tag', text: profile?.name ?? 'Rival' })),
+        h('p', { class: 'rival-style', text: styleSummary(f) }),
         h('p', { class: 'rival-build', 'data-k': `build-${f.id}`, text: f.alive ? buildSummary(f) : profile?.summary ?? '' }),
         h('p', { class: 'rival-status', 'data-k': `status-${f.id}`, text: rivalStatus(w, f, contacts) }),
       ),
@@ -69,6 +71,9 @@ export const territoryPanel: Panel = {
     const kv = h('dl', { class: 'kv' });
     for (const [id, label, value] of youRows(w)) kv.append(h('dt', { text: label }), h('dd', { 'data-k': id, text: value }));
     return h('div', {},
+      h('p', { class: 'section-title', text: 'Behavior' }),
+      h('p', { class: 'b-intro', text: 'Free to change any time. These decide what your territory goes after; upgrades decide how strong it is.' }),
+      behaviorControls(ctx),
       h('p', { class: 'section-title', text: 'You' }),
       kv,
       h('p', { class: 'build-line', 'data-k': 'build', text: buildSummary(w.player) }),

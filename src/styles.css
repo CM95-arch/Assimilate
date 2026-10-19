@@ -331,3 +331,19 @@ input[type=range]:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* With a panel open, notices sit just above it instead. */
 .sheet-open #toasts { bottom: calc(var(--nav-h, 64px) + var(--sheet-px, 340px) + 8px); }
+
+/* ---------- Behaviour sliders ---------- */
+.slider-wrap { position: relative; display: flex; align-items: center; }
+.slider-wrap .notch { position: absolute; width: 2px; background: var(--ink-3); border-radius: 1px; pointer-events: none; }
+.b-intro { margin: 0 0 6px; font-size: 0.78em; color: var(--ink-2); }
+.behavior { display: flex; flex-direction: column; }
+.b-row { padding: 8px 0 10px; border-bottom: 1px solid var(--line); }
+.b-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.b-head strong { font-size: 0.92em; font-weight: 650; }
+.b-value { font-size: 0.8em; font-weight: 600; color: var(--ink-2); }
+.b-row .slider-wrap { height: 38px; }
+.b-row .slider-wrap .notch { left: 50%; top: 10px; bottom: 10px; transform: translateX(-1px); }
+.b-row input[type=range] { height: 38px; position: relative; z-index: 1; }
+.b-ends { display: flex; justify-content: space-between; font-size: 0.72em; color: var(--ink-3); margin-top: -4px; }
+.b-hint { margin: 4px 0 0; font-size: 0.76em; color: var(--ink-2); min-height: 1.3em; }
+.rival-info .rival-style { color: var(--ink); }

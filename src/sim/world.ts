@@ -192,6 +192,10 @@ export class World {
     const color = COLORS.rivals[n % COLORS.rivals.length];
     const name = COLORS.rivalNames[n % COLORS.rivalNames.length];
     const f = createFaction(id, name, color, false, profile.id, taste);
+    // Personal twist on the profile's behaviour, so two Fortresses still play differently.
+    const twist = (v: number) => Math.max(-1, Math.min(1, v + (this.rng.next() - 0.5) * 0.6));
+    f.behavior = { focus: twist(profile.behavior.focus), shape: twist(profile.behavior.shape), reach: twist(profile.behavior.reach), posture: twist(profile.behavior.posture) };
+    refreshStats(f);
     this.factions.set(id, f);
     this.placeCluster(f, site.x, site.y);
     const p = this.factions.get(PLAYER);

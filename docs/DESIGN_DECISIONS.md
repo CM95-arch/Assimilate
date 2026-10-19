@@ -8,10 +8,10 @@ with a notice. Numbers live in `src/config/`.
 
 | Question | Answer → implementation |
 | --- | --- |
-| Starting pace | About 1 neutral capture per second (`BASE_STATS.rate` 1.05 × 92% success) |
+| Starting pace | Changed after playtesting to about 1 capture every 3 s (see Pace) |
 | Being wiped out | The run ends with a summary and a new run. Prestige rewards come in a later phase |
 | Rival strength | A rival gets your earned energy ±15% plus the same starting energy when it appears, spends it immediately on **its own** route (profile × a random personal twist), then earns and spends by the same rules as you |
-| First contact | The first rival sits 14–17 cells away. In testing, contact came after 55–90 s |
+| First contact | Changed after playtesting to about 3.5–4.5 minutes (see Pace) |
 
 ## What was reused and what was removed
 
@@ -31,19 +31,17 @@ roughly steady rather than exponential (a test checks this).
 **Choosing a target.** For each attempt the faction samples a few of its own border cells (4, or
 more with Frontier Coordination) and scores every neighbouring cell it doesn't own:
 
-| Factor | Effect | Upgrade |
+| Factor | Effect | Set by |
 | --- | --- | --- |
-| Open ground vs enemy | Enemy cells start at 0.6× preference | Aggression raises it |
-| Own neighbours (3×3) | Prefer gaps (compact) or open space (fingers) | Consolidation / Branching |
-| Distance from own centre | Prefer outermost edges | Directional Momentum |
-| Enemy cell's defenders and our touching sides | Prefer weak points and cells already half-surrounded | Flanking |
-| Our border cell was attacked recently | Concentrate there | Threat Response |
-| We lost the target recently | Retake it | Recovery |
+| Open ground vs enemy | Enemy cells start at 0.6× preference | Focus slider |
+| Own neighbours (3×3) | Prefer gaps (compact) or open space (fingers) | Shape slider |
+| Distance from own centre | Prefer outermost edges, or fill in nearer the centre | Reach slider |
+| Enemy cell's defenders and our touching sides | Prefer weak points and cells already half-surrounded | Posture slider (exploit) |
+| Our border cell was attacked recently | Concentrate there | Posture slider (defend) |
+| We lost the target recently | Retake it | Posture slider (defend) |
 
 One target is picked at random in proportion to these scores. Nothing names flanking or
-encirclement; they come from the scores interacting on the board. Tests check that Branching
-gives at least 1.6× the exposed edge of Consolidation, that Momentum stretches territory, and
-that Aggression and Flanking shift where attacks land.
+encirclement; they come from the scores interacting on the board. Tests check that each slider measurably changes behaviour.
 
 **Conversion.** `chance = 0.75 × attack / (attack + defence)`, where
 `attack = power × (1 + pressure × our sides touching the cell)` and
@@ -51,26 +49,45 @@ that Aggression and Flanking shift where attacks land.
 Thin lines and tips fall easily and solid blocks hold, so shape matters without special rules.
 Neutral cells succeed 92% of the time.
 
-**Energy.** You get 1 per neutral claim and 3 per conversion, before Energy Yield and Conquest
-Bonus. You start with 10, enough for a first upgrade. In testing a simple player bought 10–11
-levels in the first 60 seconds.
+**Energy.** You get 2 per neutral claim and 6 per conversion, before Energy Yield and Conquest
+Bonus. You start with 10, enough for a first upgrade.
 
-## Upgrades in this build (17 of the 27 listed)
+## Upgrades vs behaviour sliders
 
-- **Expansion:** Expansion Rate, Branching, Consolidation, Directional Momentum, Frontier
-  Coordination.
-- **Combat:** Conversion Power, Aggression, Pressure.
-- **Defense:** Resistance, Reinforcement, Entrenchment, Recovery.
-- **Strategy:** Flanking, Threat Response.
+**Rule:** an upgrade must make a faction strictly better and must never compete with another
+upgrade. Anything that trades one preference for another is a free behaviour slider instead.
+A unit test enforces this: every upgrade must raise stats (or lower prices) and must not touch
+the behaviour stats.
+
+**Behaviour sliders** (Territory tab, each from −1 to +1, free to change at any time):
+
+| Slider | − end | + end | Replaces |
+| --- | --- | --- | --- |
+| Focus | Claim open ground | Attack enemy cells | Aggression |
+| Shape | Compact (fill gaps) | Branching (reach into open space) | Branching vs Consolidation |
+| Reach | Even growth | Spearheads at the outer tips | Directional Momentum |
+| Posture | Defend: reinforce where attacked, retake lost cells | Exploit: hunt thin, half-surrounded enemy cells | Threat Response + Recovery vs Flanking |
+
+A rival's sliders come from its personality plus a random ±0.3 twist each.
+
+**Upgrades (10):**
+- **Expansion:** Expansion Rate, Coordination (more border sampled per attempt, so slider
+  settings are followed more precisely).
+- **Combat:** Conversion Power, Pressure.
+- **Defense:** Resistance, Reinforcement, Entrenchment.
 - **Economy:** Energy Yield, Conquest Bonus, Upgrade Cost Reduction.
 
-The four starters are available from the first second. Others unlock as you earn energy during
-the run, and rivals follow the same unlock rule.
+The four starters are available from the first second. The rest unlock as you earn energy
+during the run, and rivals follow the same unlock rule. New upgrades will be chosen from the
+creative list in the phase report.
 
-**Not built yet:** Expansion Efficiency, Expansion Reach, Attack Frequency, Breakthrough,
-Overrun, Counterpressure, Adaptability, Isolation, Target Selection and Passive Income. Each one
-is a new stat or scoring factor, so the structure supports them without rewrites. Expansion
-Reach (claiming non-adjacent cells) is the one that needs a small rule addition.
+## Pace (0.2.2)
+
+- About one capture every 3 seconds at the start (`BASE_STATS.rate` 0.36).
+- Energy is 2 per claim and 6 per conversion, so you still get 6–7 upgrade levels in the
+  first minute.
+- The first rival sits 16–19 cells away, so first contact usually comes at about 3.5–4.5
+  minutes, sooner if it is a Rapid Expander.
 
 ## Infinite world
 

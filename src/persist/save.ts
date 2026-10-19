@@ -4,7 +4,7 @@
 
 import { GRID, SAVE } from '../config/balance';
 import { PROFILE_BY_ID } from '../config/profiles';
-import { UPGRADE_BY_ID } from '../config/upgrades';
+import { BEHAVIOR_KEYS, UPGRADE_BY_ID, type Behavior } from '../config/upgrades';
 import { createFaction, type Faction } from '../sim/faction';
 import { Chunk, cellKey } from '../sim/grid';
 import { World } from '../sim/world';
@@ -18,7 +18,7 @@ export interface StorageLike {
 
 interface SavedFaction {
   id: number; name: string; color: string; isPlayer: boolean; profile: string;
-  taste: Record<string, number>; levels: Record<string, number>;
+  taste: Record<string, number>; levels: Record<string, number>; behavior: Behavior;
   energy: number; earned: number; alive: boolean; spawnedAt: number; homeX: number; homeY: number;
   claimed: number; converted: number; lost: number; peakCells: number;
 }
@@ -72,7 +72,7 @@ export function serialize(snap: Snapshot, now: number): string {
     chunks.push({ cx: c.cx, cy: c.cy, owner: toBase64(c.owner), age: toBase64(age) });
   }
   const factions: SavedFaction[] = [...w.factions.values()].map((f) => ({
-    id: f.id, name: f.name, color: f.color, isPlayer: f.isPlayer, profile: f.profile, taste: f.taste, levels: f.levels,
+    id: f.id, name: f.name, color: f.color, isPlayer: f.isPlayer, profile: f.profile, taste: f.taste, levels: f.levels, behavior: f.behavior,
     energy: f.energy, earned: f.earned, alive: f.alive, spawnedAt: f.spawnedAt, homeX: f.homeX, homeY: f.homeY,
     claimed: f.claimed, converted: f.converted, lost: f.lost, peakCells: f.peakCells,
   }));
@@ -136,6 +136,8 @@ function faction(v: unknown): Faction {
   if (s.taste && typeof s.taste === 'object') for (const [k, t] of Object.entries(s.taste as Record<string, unknown>)) if (UPGRADE_BY_ID[k]) taste[k] = num(t, 1, 0.01, 100);
   const f = createFaction(id, str(s.name, isPlayer ? 'You' : 'Rival'), str(s.color, '#888888'), isPlayer, (PROFILE_BY_ID[profile] || isPlayer) ? profile : 'balanced', taste);
   f.levels = levels(s.levels);
+  const b = (s.behavior ?? {}) as Record<string, unknown>;
+  for (const k of BEHAVIOR_KEYS) f.behavior[k] = num(b[k], 0, -1, 1);
   f.energy = num(s.energy, 0, 0);
   f.earned = num(s.earned, 0, 0);
   f.alive = bool(s.alive, true);

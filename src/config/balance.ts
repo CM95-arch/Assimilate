@@ -26,7 +26,7 @@ export const START = {
 /** Base abilities every faction starts with, before upgrades. */
 export const BASE_STATS = {
   /** Expansion attempts per second. */
-  rate: 1.05,
+  rate: 0.36,
   /** Rate grows with territory as rate × (1 + sizeBonus × √cells): helpful, never exponential. */
   sizeBonus: 0.06,
   /** Border cells sampled per attempt when choosing a target (more = smarter choices). */
@@ -43,9 +43,8 @@ export const BASE_STATS = {
   /** Extra resistance a fully entrenched cell gets, and seconds to fully entrench. */
   entrench: 0,
   entrenchSeconds: 40,
-  /** Behaviour priorities (0 = neutral). Upgrades add to these. */
+  /** Behaviour priorities. Set from the faction's behaviour sliders (see BEHAVIOR), not upgrades. */
   aggression: 0,
-  branching: 0,
   consolidation: 0.4,
   momentum: 0,
   flanking: 0,
@@ -70,17 +69,33 @@ export const COMBAT = {
 
 export const ENERGY = {
   /** Per neutral cell claimed and per enemy cell converted, before multipliers. */
-  neutral: 1,
-  conquest: 3,
+  neutral: 2,
+  conquest: 6,
   /** Window for the HUD's energy-per-second readout. */
   rateWindowSeconds: 6,
 };
 
+/**
+ * Behaviour sliders (each −1…+1, 0 = centre). They set priorities, so they are choices rather
+ * than purchases: moving one way always gives up the other. Values below are at the extremes.
+ */
+export const BEHAVIOR = {
+  /** Focus: claim open ground (−1) ↔ attack enemy cells (+1). Adds to `aggression`. */
+  focus: 2,
+  /** Shape: compact (−1) ↔ branching (+1). Subtracted from `consolidation`. */
+  shape: 2.6,
+  /** Reach: even growth (−1) ↔ spearheads at the outer edges (+1). Sets `momentum`. */
+  reach: 2.4,
+  /** Posture: defend and retake (−1) ↔ exploit weak points (+1). */
+  defend: 2.5,
+  exploit: 3,
+};
+
 /** Rival placement and pacing. */
 export const RIVALS = {
-  /** First rival's distance from your start (cells): first contact after ~1–2 minutes. */
-  firstDistance: [14, 17] as const,
-  secondDistance: [36, 44] as const,
+  /** First rival's distance from your start (cells): first contact after ~2.5–4 minutes. */
+  firstDistance: [16, 19] as const,
+  secondDistance: [42, 50] as const,
   /** New rivals appear this far beyond your territory's reach. */
   spawnBeyond: [26, 46] as const,
   /** Rivals wanted near you: base + one more per this many cells of reach. */
@@ -147,6 +162,6 @@ export const AUDIO = {
 export const SAVE = {
   key: 'assimilate.save',
   backupKey: 'assimilate.save.bak',
-  version: 2,
+  version: 3,
   autosaveSeconds: 10,
 };

@@ -2,12 +2,12 @@
 
 An idle territory-conquest game for phones. You are the black territory on an endless white grid.
 Your territory expands on its own, and so do coloured rival factions. You don't move anything by
-hand. You spend energy on upgrades that decide how your territory spreads, how hard it hits, how
-well it holds, and what it goes after. Every rival plays by the same rules with its own build,
-so each border becomes a different fight.
+hand. Behaviour sliders decide what your territory goes after, and energy buys upgrades that make
+it stronger. Every rival plays by the same rules with its own settings and build, so each border
+becomes a different fight.
 
-**Current build: 0.2.0, the first playable version of the territory redesign.** Infinite grid,
-budget-based expansion at about one cell per second, energy, 17 upgrades in five categories, rivals
+**Current build: 0.2.2.** Infinite grid, budget-based expansion at about one cell every 3
+seconds, energy, four behaviour sliders, 10 upgrades in four categories, rivals
 with five personalities that appear as you expand, border combat, a camera you can drag and zoom,
 saving, statistics and settings. Prestige, offline progress and the rest of the upgrade list come
 next (see `docs/PHASE_REPORT.md`).
@@ -50,10 +50,12 @@ Add `?debug` to the URL to expose `window.__assimilate` in the browser console, 
 All gameplay numbers live in `src/config/`:
 
 - `balance.ts`: base faction stats, combat, energy, rival spawning, camera, animation and colours.
-- `upgrades.ts`: every upgrade's cost, unlock point and what it changes.
-- `profiles.ts`: rival personalities (how much each type values each upgrade).
+- `upgrades.ts`: every upgrade's cost, unlock point and what it changes, plus how the
+  behaviour sliders map onto priorities.
+- `profiles.ts`: rival personalities (slider positions and how much each type values each
+  upgrade).
 
-After changing numbers, run `npm run sim` (try `SEED=3 MINUTES=10`, or `BUILD=branching,momentum`)
+After changing numbers, run `npm run sim` (try `SEED=3 MINUTES=10`, or `BUILD=power,resistance`)
 and then `npm test`.
 
 ## Project layout

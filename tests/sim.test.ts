@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BASE_STATS, START, TIME } from '../src/config/balance';
-import { UPGRADES, deriveStats } from '../src/config/upgrades';
+import { UPGRADES, deriveStats, neutralBehavior, type Behavior } from '../src/config/upgrades';
 import { buy, isUnlocked, quote, upgradeCost } from '../src/sim/economy';
 import { chooseTarget, conversionChance, type Candidate } from '../src/sim/expansion';
 import { createFaction, type Faction } from '../src/sim/faction';
@@ -23,7 +23,12 @@ function lab(seed = 1): World {
 
 function grantLevels(f: Faction, levels: Record<string, number>) {
   f.levels = { ...levels };
-  f.stats = deriveStats(f.levels);
+  f.stats = deriveStats(f.levels, f.behavior);
+}
+
+function setBehavior(f: Faction, b: Partial<Behavior>) {
+  f.behavior = { ...neutralBehavior(), ...b };
+  f.stats = deriveStats(f.levels, f.behavior);
 }
 
 describe('grid', () => {
@@ -86,24 +91,24 @@ describe('starting clusters', () => {
 });
 
 describe('expansion pace', () => {
-  it('starts at about one neutral capture per second, not exponentially', () => {
+  it('starts at about one neutral capture every three seconds', () => {
     const w = lab();
     w.placeCluster(w.player, 0, 0);
     const start = w.player.cells;
-    run(w, 30);
-    const per = (w.player.cells - start) / 30;
-    expect(per).toBeGreaterThan(0.8);
-    expect(per).toBeLessThan(1.8);
+    run(w, 60);
+    const per = (w.player.cells - start) / 60;
+    expect(per).toBeGreaterThan(0.25);
+    expect(per).toBeLessThan(0.5);
   });
 
   it('territory size helps only modestly (square-root bonus)', () => {
     const w = lab();
     w.placeCluster(w.player, 0, 0);
-    run(w, 60);
+    run(w, 180);
     const early = w.player.cells;
-    run(w, 60);
+    run(w, 180);
     const mid = w.player.cells - early;
-    run(w, 60);
+    run(w, 180);
     const late = w.player.cells - early - mid;
     expect(late).toBeGreaterThan(mid * 0.9);
     expect(late).toBeLessThan(mid * 1.6);
@@ -114,7 +119,7 @@ describe('expansion pace', () => {
       const w = lab(3);
       w.placeCluster(w.player, 0, 0);
       grantLevels(w.player, { rate: levels });
-      return run(w, 40).player.cells;
+      return run(w, 120).player.cells;
     };
     expect(grow(5)).toBeGreaterThan(grow(0) * 1.6);
   });
@@ -153,7 +158,7 @@ describe('combat', () => {
   });
 
   it('caches stay exact through long multi-faction battles', () => {
-    const w = run(World.create(11), 240);
+    const w = run(World.create(11), 600);
     expect(w.audit()).toEqual([]);
     let fights = 0;
     for (const f of w.factions.values()) fights += f.converted;
@@ -167,7 +172,8 @@ describe('combat', () => {
     w.factions.set(2, weak);
     w.transfer(0, 0, PLAYER);
     w.transfer(1, 0, 2);
-    grantLevels(p, { power: 60, aggression: 10 });
+    grantLevels(p, { power: 60 });
+    setBehavior(p, { focus: 1 });
     weak.stats.rate = 0;
     run(w, 20);
     expect(weak.alive).toBe(false);
@@ -180,15 +186,16 @@ describe('combat', () => {
     w.factions.set(2, strong);
     w.transfer(0, 0, PLAYER);
     w.transfer(1, 0, 2);
-    grantLevels(strong, { power: 60, aggression: 10 });
+    grantLevels(strong, { power: 60 });
+    setBehavior(strong, { focus: 1 });
     w.player.stats.rate = 0;
-    run(w, 30);
+    run(w, 60);
     expect(w.ended).toBe(true);
     expect(w.events.some((e) => e.type === 'defeat')).toBe(true);
   });
 });
 
-describe('emergent behaviour from upgrades', () => {
+describe('emergent behaviour from the behaviour sliders', () => {
   /** Exposed edges per cell: low for compact blobs, high for branching shapes. */
   const edgeRatio = (w: World, id: number) => {
     let edges = 0;
@@ -200,26 +207,26 @@ describe('emergent behaviour from upgrades', () => {
     });
     return edges / cells;
   };
-  const grownWith = (seed: number, levels: Record<string, number>, cells = 400) => {
+  const grownWith = (seed: number, b: Partial<Behavior>, cells = 400) => {
     const w = lab(seed);
     w.placeCluster(w.player, 0, 0);
-    grantLevels(w.player, levels);
+    setBehavior(w.player, b);
     while (w.player.cells < cells) w.step();
     return w;
   };
 
-  it('Branching produces spread-out shapes; Consolidation produces compact ones', () => {
+  it('Shape: branching gives spread-out territory, compact gives a solid mass', () => {
     let branchy = 0;
     let compact = 0;
     for (const seed of [1, 2, 3]) {
-      branchy += edgeRatio(grownWith(seed, { branching: 10 }), PLAYER);
-      compact += edgeRatio(grownWith(seed, { consolidation: 10 }), PLAYER);
+      branchy += edgeRatio(grownWith(seed, { shape: 1 }), PLAYER);
+      compact += edgeRatio(grownWith(seed, { shape: -1 }), PLAYER);
     }
     expect(branchy).toBeGreaterThan(compact * 1.6);
   });
 
-  it('Directional Momentum stretches territory further from its centre', () => {
-    const reach = (levels: Record<string, number>) => {
+  it('Reach: spearheads stretch territory further than even growth', () => {
+    const reach = (levels: Partial<Behavior>) => {
       let r = 0;
       for (const seed of [1, 2, 3]) {
         const w = grownWith(seed, levels);
@@ -228,18 +235,18 @@ describe('emergent behaviour from upgrades', () => {
       }
       return r;
     };
-    expect(reach({ momentum: 10 })).toBeGreaterThan(reach({}) * 1.3);
+    expect(reach({ reach: 1 })).toBeGreaterThan(reach({ reach: -1 }) * 1.3);
   });
 
-  it('Aggression shifts effort from open ground to enemy cells', () => {
-    const attackShare = (levels: Record<string, number>) => {
+  it('Focus: attack shifts effort from open ground to enemy cells', () => {
+    const attackShare = (b: Partial<Behavior>) => {
       const w = lab(4);
       const rival = createFaction(2, 'Rival', '#f00', false, 'balanced');
       w.factions.set(2, rival);
       for (let y = -6; y <= 6; y++) {
         for (let x = -6; x <= 6; x++) w.transfer(x, y, x < 0 ? PLAYER : 2);
       }
-      grantLevels(w.player, levels);
+      setBehavior(w.player, b);
       const rng = new Rng(9);
       let enemy = 0;
       const n = 3000;
@@ -250,10 +257,10 @@ describe('emergent behaviour from upgrades', () => {
       }
       return enemy / n;
     };
-    expect(attackShare({ aggression: 8 })).toBeGreaterThan(attackShare({}) * 1.5);
+    expect(attackShare({ focus: 1 })).toBeGreaterThan(attackShare({ focus: -1 }) * 3);
   });
 
-  it('Flanking focuses attacks on exposed, already-touched enemy cells', () => {
+  it('Posture: exploit focuses attacks on exposed, already-touched enemy cells', () => {
     const w = lab(5);
     const rival = createFaction(2, 'Rival', '#f00', false, 'balanced');
     w.factions.set(2, rival);
@@ -262,8 +269,8 @@ describe('emergent behaviour from upgrades', () => {
     w.transfer(0, -1, 2);
     for (let x = -3; x <= 3; x++) if (x !== 0) w.transfer(x, -1, PLAYER);
     for (let x = -3; x <= 3; x++) w.transfer(x, -2, PLAYER);
-    const share = (levels: Record<string, number>) => {
-      grantLevels(w.player, { aggression: 10, ...levels });
+    const share = (posture: number) => {
+      setBehavior(w.player, { focus: 1, posture });
       const rng = new Rng(2);
       let tip = 0;
       let enemy = 0;
@@ -276,7 +283,44 @@ describe('emergent behaviour from upgrades', () => {
       }
       return tip / enemy;
     };
-    expect(share({ flanking: 10 })).toBeGreaterThan(share({}) * 1.5);
+    expect(share(1)).toBeGreaterThan(share(0) * 1.5);
+  });
+
+  it('Posture: defend concentrates effort where the border is under attack', () => {
+    const w = lab(6);
+    w.placeCluster(w.player, 0, 0);
+    for (let x = -8; x <= 8; x++) w.transfer(x, 0, PLAYER);
+    // Mark the left end as recently attacked.
+    for (let x = -8; x <= -5; x++) w.grid.markHit(x, 0, 0);
+    const leftShare = (posture: number) => {
+      setBehavior(w.player, { posture });
+      const rng = new Rng(4);
+      let left = 0;
+      const out: Candidate[] = [];
+      for (let i = 0; i < 4000; i++) {
+        const t = chooseTarget({ grid: w.grid, f: w.player, now: 1, cx: 0, cy: 0, r: 4 }, rng, out);
+        if (t && t.x <= -4) left++;
+      }
+      return left / 4000;
+    };
+    expect(leftShare(-1)).toBeGreaterThan(leftShare(0) * 1.5);
+  });
+
+  it('every upgrade is strictly beneficial: no two upgrades pull stats in opposite directions', () => {
+    const base = deriveStats({});
+    for (const def of UPGRADES) {
+      const up = deriveStats({ [def.id]: 5 });
+      const changed = (Object.keys(base) as (keyof typeof base)[]).filter((k) => up[k] !== base[k]);
+      expect(changed.length, `${def.id} changes nothing`).toBeGreaterThan(0);
+      for (const k of changed) {
+        // Lower is better only for prices; everything else must go up.
+        if (k === 'costMult') expect(up[k]).toBeLessThan(base[k]);
+        else expect(up[k], `${def.id} lowers ${k}`).toBeGreaterThan(base[k]);
+      }
+      for (const k of ['aggression', 'consolidation', 'momentum', 'flanking', 'threat', 'recovery'] as const) {
+        expect(up[k], `${def.id} touches behaviour stat ${k}`).toBe(base[k]);
+      }
+    }
   });
 });
 
@@ -293,7 +337,7 @@ describe('economy', () => {
       const cheapest = starters.slice().sort((a, b) => upgradeCost(a, p.levels[a.id] ?? 0, 1) - upgradeCost(b, p.levels[b.id] ?? 0, 1))[0];
       if (buy(p, cheapest.id).ok) bought++;
     }
-    expect(bought).toBeGreaterThanOrEqual(5);
+    expect(bought).toBeGreaterThanOrEqual(4);
   });
 
   it('prices escalate, ×10 quotes ten levels, Max buys what is affordable', () => {
@@ -352,9 +396,9 @@ describe('rivals', () => {
 
   it('new rivals appear as your territory reaches further, never inside anyone’s territory', () => {
     const w = World.create(8);
-    grantLevels(w.player, { rate: 20, power: 10, resistance: 10 });
+    grantLevels(w.player, { rate: 30, power: 10, resistance: 10 });
     const before = w.factions.size;
-    run(w, 400);
+    run(w, 600);
     expect(w.factions.size).toBeGreaterThan(before);
     expect(w.audit()).toEqual([]);
   });

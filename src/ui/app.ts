@@ -270,7 +270,7 @@ export class App {
 
   showIntro() {
     if (this.game.settings.introSeen) return;
-    this.tip.show('You are black. Your territory expands on its own, and so do your rivals. Spend energy on Upgrades to decide how it spreads and fights.', () => {
+    this.tip.show('You are black. Your territory expands on its own, and so do your rivals. Spend energy on Upgrades to make it stronger, and use the sliders in Territory to decide what it goes after.', () => {
       this.game.settings.introSeen = true;
       this.hooks.save();
     });

@@ -5,11 +5,11 @@
 // in proportion to the scores, and tries to take it. Nothing here mentions flanking, fronts or
 // encirclement; those patterns come from how the priorities below interact on the board.
 //
-// Priorities (all set by upgrades):
-//   open ground vs enemy cells (aggression), few vs many own neighbours (branching vs
-//   consolidation), distance from own centre (momentum), weakly-defended or already-touched
-//   enemy cells (flanking), cells near where we are being attacked (threat response), and cells
-//   we lost recently (recovery).
+// Priorities (set by the faction's behaviour sliders, see deriveStats in config/upgrades.ts):
+//   open ground vs enemy cells (Focus → aggression), many vs few own neighbours (Shape →
+//   consolidation), distance from own centre (Reach → momentum), and on Posture either cells near
+//   where we are being attacked and cells we lost recently (threat, recovery) or weakly-defended,
+//   already-touched enemy cells (flanking).
 
 import { COMBAT } from '../config/balance';
 import type { Stats } from '../config/upgrades';
@@ -51,9 +51,9 @@ export function score(c: Context, x: number, y: number, sx: number, sy: number):
     }
   }
   // Shape: positive bias fills gaps (compact), negative reaches into open space (branches).
-  const shape = s.consolidation - s.branching;
-  if (shape !== 0) w *= Math.exp(shape * (grid.around(x, y, f.id) - 2.5) / 2);
-  if (s.momentum > 0 && c.r > 1) {
+  if (s.consolidation !== 0) w *= Math.exp(s.consolidation * (grid.around(x, y, f.id) - 2.5) / 2);
+  // Reach: positive pushes the outermost edges (spearheads), negative fills in nearer the centre.
+  if (s.momentum !== 0 && c.r > 1) {
     const d = Math.hypot(x - c.cx, y - c.cy) / c.r;
     w *= Math.exp(s.momentum * Math.min(2, d - 1));
   }

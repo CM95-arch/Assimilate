@@ -100,11 +100,11 @@ console.log('Assimilate e2e');
     await shot(page, '01-first-launch');
   });
 
-  await test('territory expands about once per second and the HUD tracks it', async () => {
+  await test('territory expands about once every three seconds and the HUD tracks it', async () => {
     const a = await cells(page);
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(9000);
     const b = await cells(page);
-    assert(b - a >= 2 && b - a <= 12, `expected ~5 captures in 5s, got ${b - a}`);
+    assert(b - a >= 1 && b - a <= 7, `expected ~3 captures in 9s, got ${b - a}`);
     assert(Number((await text(page, '#stat-territory [data-v]')).replace(/\D/g, '')) >= a, 'HUD territory not updating');
   });
 
@@ -197,12 +197,12 @@ console.log('Assimilate e2e');
 
   await test('categories switch; locked upgrades say how to unlock them', async () => {
     await G(page, () => { const p = window.__assimilate.game.world.player; p.earned = 0; });
-    for (const c of ['combat', 'defense', 'strategy', 'economy', 'expansion']) {
+    for (const c of ['combat', 'defense', 'economy', 'expansion']) {
       await page.locator(`.chip[data-cat="${c}"]`).click();
       assert((await page.locator(`.chip[data-cat="${c}"]`).getAttribute('aria-pressed')) === 'true', `${c} chip not active`);
       assert((await page.locator('[data-upgrade]').count()) > 0, `${c}: no cards`);
     }
-    await page.locator('.chip[data-cat="strategy"]').click();
+    await page.locator('.chip[data-cat="defense"]').click();
     assert(/Unlocks after earning/.test(await text(page, '#sheet-body')), 'no unlock hint');
     await G(page, () => { const p = window.__assimilate.game.world.player; p.earned = 1e6; });
     await page.waitForTimeout(400);
@@ -261,6 +261,32 @@ console.log('Assimilate e2e');
     await page.keyboard.press('Escape');
   });
 
+  await test('behaviour sliders: all four present, change priorities live, persist, and centre again', async () => {
+    await page.locator('#tabs [data-tab="territory"]').click();
+    for (const k of ['focus', 'shape', 'reach', 'posture']) assert(await page.locator(`input[data-slider="${k}"]`).count(), `${k} slider missing`);
+    const before = await G(page, () => window.__assimilate.game.world.player.stats.aggression);
+    await page.locator('input[data-slider="focus"]').fill('1');
+    await page.locator('input[data-slider="shape"]').fill('-0.6');
+    const after = await G(page, () => ({ b: window.__assimilate.game.world.player.behavior, aggr: window.__assimilate.game.world.player.stats.aggression }));
+    assert(after.b.focus === 1 && after.b.shape === -0.6, `sliders not applied ${JSON.stringify(after.b)}`);
+    assert(after.aggr > before, 'focus did not change attack preference');
+    assert(/Strongly attack/.test(await text(page, '[data-k="b-focus"]')), 'slider label not updated');
+    assert(/Style:/.test(await text(page, '.rivals')), 'rival styles missing');
+    await shot(page, '03b-behavior');
+    await page.keyboard.press('Escape');
+    await G(page, () => window.__assimilate.save());
+    await page.reload();
+    await page.waitForTimeout(400);
+    const kept = await G(page, () => window.__assimilate.game.world.player.behavior);
+    assert(kept.focus === 1 && kept.shape === -0.6, `sliders not saved ${JSON.stringify(kept)}`);
+    await page.locator('#tabs [data-tab="territory"]').click();
+    await page.locator('[data-action="reset-behavior"]').click();
+    const centred = await G(page, () => window.__assimilate.game.world.player.behavior);
+    assert(Object.values(centred).every((v) => v === 0), 'centre all did not reset');
+    assert((await page.locator('input[data-slider="focus"]').inputValue()) === '0', 'slider UI not reset');
+    await page.keyboard.press('Escape');
+  });
+
   await test('drag pans the map, the re-centre button appears and restores following', async () => {
     assert(await page.locator('#recenter-btn').isHidden(), 're-centre visible too early');
     const box = await page.locator('#field').boundingBox();
@@ -292,7 +318,7 @@ console.log('Assimilate e2e');
   });
 
   await test('first contact with a rival is announced and the status changes', async () => {
-    for (let i = 0; i < 40 && !(await G(page, () => window.__assimilate.game.world.contacts().length)); i++) await ticks(page, 50);
+    for (let i = 0; i < 80 && !(await G(page, () => window.__assimilate.game.world.contacts().length)); i++) await ticks(page, 50);
     await page.waitForTimeout(800);
     assert(await G(page, () => window.__assimilate.game.world.contacts().length > 0), 'never met a rival');
     assert(/Contact/.test(await text(page, '#toasts')) || /At war|Losing/.test(await text(page, '#stat-status [data-v]')), 'contact not shown');
@@ -364,7 +390,7 @@ console.log('Assimilate e2e');
   await test('defeat: the run ends with a summary that cannot be dismissed by accident; new run works', async () => {
     await G(page, () => {
       const a = window.__assimilate;
-      for (const f of a.game.world.factions.values()) if (!f.isPlayer) a.grant(f.id, { power: 60, aggression: 10, rate: 40 });
+      for (const f of a.game.world.factions.values()) if (!f.isPlayer) { f.behavior.focus = 1; a.grant(f.id, { power: 60, rate: 40 }); }
       a.game.world.player.stats.rate = 0;
       a.game.world.player.stats.resistance = 0.01;
     });
@@ -475,10 +501,10 @@ for (const [name, value, expect] of [
     const r = await G(page, async () => {
       const a = window.__assimilate;
       const w = a.game.world;
-      for (const f of w.factions.values()) a.grant(f.id, { rate: 40, resistance: 10 });
+      for (const f of w.factions.values()) a.grant(f.id, { rate: 60, resistance: 10 });
       const t0 = performance.now();
       let n = 0;
-      while (w.player.cells < 6000 && n < 6000 && !w.ended) { w.step(); n++; }
+      while (w.player.cells < 6000 && n < 14000 && !w.ended) { w.step(); n++; }
       const simMs = (performance.now() - t0) / n;
       await new Promise((res) => setTimeout(res, 3500));
       const samples = [];
