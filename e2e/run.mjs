@@ -424,7 +424,7 @@ console.log('Assimilate e2e');
 // ---------- old and corrupted saves ----------
 for (const [name, value, expect] of [
   ['corrupted save', '{broken', /unreadable/i],
-  ['save from the old biology design', JSON.stringify({ version: 1, world: { seed: 1, cells: '' } }), /redesigned/i],,
+  ['save from the old biology design', JSON.stringify({ version: 1, world: { seed: 1, cells: '' } }), /redesigned/i],
 ]) {
   const { ctx, page } = await newPage();
   await ctx.addInitScript((v) => {
@@ -496,6 +496,38 @@ for (const [name, value, expect] of [
     assert(r.simMs < 8, `ticks too slow: ${r.simMs} ms`);
     assert(r.drawMs < 14, `drawing too slow: ${r.drawMs} ms`);
     await shot(page, '08-large-battle');
+  });
+  await ctx.close();
+}
+
+// ---------- desktop smoothness (regression: lag after ~30 s on large screens) ----------
+{
+  const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 2 });
+  const page = await ctx.newPage();
+  currentPage = page;
+  await page.goto(APP_URL);
+  await page.waitForTimeout(400);
+  await test('large high-density screen stays at ~60 fps two minutes in and while zooming', async () => {
+    const frames = async () => G(page, async () => {
+      const t = [];
+      let last = performance.now();
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const n = performance.now();
+        t.push(n - last);
+        last = n;
+      }
+      t.sort((a, b) => a - b);
+      return t[20];
+    });
+    await G(page, () => { const g = window.__assimilate.game; while (g.world.time < 120) g.world.step(); g.world.events.length = 0; });
+    await page.waitForTimeout(3000);
+    const rest = await frames();
+    await G(page, () => window.__assimilate.game.camera.zoomTo(4, 2.4));
+    const zoom = await frames();
+    console.log(`      median frame ${rest.toFixed(1)} ms at rest, ${zoom.toFixed(1)} ms while zooming`);
+    assert(rest < 22, `slow at rest: ${rest} ms`);
+    assert(zoom < 22, `slow while zooming: ${zoom} ms`);
   });
   await ctx.close();
 }

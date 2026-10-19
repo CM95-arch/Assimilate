@@ -127,6 +127,8 @@ export const ANIM = {
   neutralHidePx: 4,
   cornerFraction: 0.16,
   roundAbovePx: 9,
+  /** With more owned cells than this on screen, corners are square (much cheaper to draw). */
+  roundMaxCells: 2500,
 };
 
 export const COLORS = {

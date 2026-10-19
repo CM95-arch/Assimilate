@@ -31,6 +31,12 @@ export interface Geometry {
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private dpr = 1;
+  /** Repeating tile for empty ground (see drawNeutral). */
+  private readonly tile = document.createElement('canvas');
+  private pattern: CanvasPattern | null = null;
+  private tileKey = '';
+  /** Owned cells drawn last frame; many cells switch to cheaper square corners. */
+  private lastDrawn = 0;
   /** Battlefield: the area between the HUD and the bottom controls (CSS px). */
   play: Rect = { x: 0, y: 0, w: 1, h: 1 };
   /** Narrow side of the battlefield with no panel open; sets the zoom (see Camera.pitch). */
@@ -42,7 +48,8 @@ export class Renderer {
   }
 
   resize(cssW: number, cssH: number, play: Rect, refSize: number) {
-    this.dpr = Math.min(3, window.devicePixelRatio || 1);
+    // Above 2× the extra sharpness is invisible on squares but quadruples the pixels to fill.
+    this.dpr = Math.min(2, window.devicePixelRatio || 1);
     this.play = play;
     this.refSize = Math.max(1, refSize);
     const w = Math.max(1, Math.round(cssW * this.dpr));
@@ -58,12 +65,15 @@ export class Renderer {
   /** Cell → device-pixel mapping for the current camera. */
   geometry(cam: Camera): Geometry {
     const d = this.dpr;
-    const pitchCss = cam.pitch(this.refSize);
-    const pitch = pitchCss * d;
-    const ox = (this.play.x + this.play.w / 2) * d - cam.cx * pitch;
-    const oy = (this.play.y + this.play.h / 2) * d - cam.cy * pitch;
+    let pitch = cam.pitch(this.refSize) * d;
+    // At rest, snap to whole device pixels: blocks line up exactly and the ground tile is a
+    // plain copy instead of a resampled stretch (much cheaper on large, dense screens).
+    if (!cam.zooming && pitch >= 4) pitch = Math.round(pitch);
+    const pitchCss = pitch / d;
+    const ox = Math.round((this.play.x + this.play.w / 2) * d - cam.cx * pitch);
+    const oy = Math.round((this.play.y + this.play.h / 2) * d - cam.cy * pitch);
     const gapCss = pitchCss < ANIM.noGapBelowPx ? 0 : Math.min(ANIM.gapMaxPx, Math.max(ANIM.gapMinPx, pitchCss * ANIM.gapFraction));
-    const radius = pitchCss >= ANIM.roundAbovePx && hasRoundRect ? pitch * ANIM.cornerFraction : 0;
+    const radius = pitchCss >= ANIM.roundAbovePx && hasRoundRect && this.lastDrawn < ANIM.roundMaxCells ? pitch * ANIM.cornerFraction : 0;
     return {
       pitch, ox, oy, gap: gapCss * d, radius,
       x0: Math.floor(-ox / pitch), y0: Math.floor(-oy / pitch),
@@ -91,41 +101,60 @@ export class Renderer {
     else p.rect(left, top, w, h);
   }
 
-  private drawNeutral(g: Geometry) {
+  /**
+   * Empty ground: one rounded block is drawn into a small tile once (pitch is snapped to whole
+   * pixels at rest), then repeated across the screen with a single fill. Drawing thousands of
+   * separate rounded shapes every frame was the main cause of lag once the view zoomed out.
+   */
+  private drawNeutral(g: Geometry): boolean {
     const ctx = this.ctx;
-    const pitchCss = g.pitch / this.dpr;
-    if (pitchCss < ANIM.neutralHidePx) return;
-    const cols = g.x1 - g.x0 + 1;
-    const rows = g.y1 - g.y0 + 1;
-    ctx.fillStyle = COLORS.neutral;
-    if (cols * rows <= 9000 && g.radius > 0) {
-      const p = new Path2D();
-      for (let y = g.y0; y <= g.y1; y++) for (let x = g.x0; x <= g.x1; x++) this.block(p, g, x, y);
-      ctx.fill(p);
-      return;
+    if (g.pitch / this.dpr < ANIM.neutralHidePx) return false;
+    if (!Number.isInteger(g.pitch)) {
+      // Mid-zoom the pitch is fractional and a stretched tile is slow on dense screens: draw a
+      // flat fill and cut the gaps as lines instead (square corners for the zoom's duration).
+      ctx.fillStyle = COLORS.neutral;
+      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      if (g.gap > 0) {
+        ctx.fillStyle = COLORS.background;
+        const gw = Math.max(1, Math.round(g.gap));
+        for (let x = g.x0; x <= g.x1 + 1; x++) ctx.fillRect(Math.round(g.ox + x * g.pitch - g.gap / 2), 0, gw, this.canvas.height);
+        for (let y = g.y0; y <= g.y1 + 1; y++) ctx.fillRect(0, Math.round(g.oy + y * g.pitch - g.gap / 2), this.canvas.width, gw);
+      }
+      return true;
     }
-    // Many small cells: one fill, then cut the gaps as background-coloured grid lines.
+    const size = g.pitch;
+    const key = `${size}|${g.gap > 0}|${g.radius > 0}`;
+    if (key !== this.tileKey || !this.pattern) {
+      this.tileKey = key;
+      this.tile.width = this.tile.height = size;
+      const t = this.tile.getContext('2d')!;
+      t.fillStyle = COLORS.background;
+      t.fillRect(0, 0, size, size);
+      t.fillStyle = COLORS.neutral;
+      const gap = g.gap;
+      t.beginPath();
+      if (g.radius > 0) t.roundRect(gap / 2, gap / 2, size - gap, size - gap, g.radius);
+      else t.rect(gap / 2, gap / 2, size - gap, size - gap);
+      t.fill();
+      this.pattern = ctx.createPattern(this.tile, 'repeat');
+    }
+    if (!this.pattern) return false;
+    this.pattern.setTransform(new DOMMatrix([1, 0, 0, 1, g.ox, g.oy]));
+    ctx.fillStyle = this.pattern;
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    if (g.gap <= 0) return;
-    ctx.fillStyle = COLORS.background;
-    for (let x = g.x0; x <= g.x1 + 1; x++) {
-      const gx = Math.round(g.ox + x * g.pitch - g.gap / 2);
-      ctx.fillRect(gx, 0, Math.max(1, Math.round(g.gap)), this.canvas.height);
-    }
-    for (let y = g.y0; y <= g.y1 + 1; y++) {
-      const gy = Math.round(g.oy + y * g.pitch - g.gap / 2);
-      ctx.fillRect(0, gy, this.canvas.width, Math.max(1, Math.round(g.gap)));
-    }
+    return true;
   }
 
   draw(cam: Camera, world: World, anims: Anims, now: number) {
     const t0 = performance.now();
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = COLORS.background;
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     const g = this.geometry(cam);
-    this.drawNeutral(g);
+    // The ground tile already contains the background, so only clear when it isn't drawn.
+    if (!this.drawNeutral(g)) {
+      ctx.fillStyle = COLORS.background;
+      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    }
 
     // Owned cells, batched into one path per faction. Only chunks that exist are visited.
     const CS = GRID.chunk;
@@ -188,6 +217,7 @@ export class Renderer {
       drawn++;
     });
 
+    this.lastDrawn = drawn;
     this.info = { drawMs: performance.now() - t0, cellsDrawn: drawn };
   }
 }
