@@ -9,6 +9,7 @@ import { chooseTarget, conversionChance, groupSize, type Candidate, type Context
 import { centroid, createFaction, radius, refreshStats, type Faction } from './faction';
 import { cellKey, DX, DY, Grid, keyX, keyY, NEUTRAL } from './grid';
 import { Rng } from './rng';
+import { adjustBlock, computeVeins, onVein } from './veins';
 
 export const PLAYER = 1;
 
@@ -84,6 +85,7 @@ export class World {
     const k = cellKey(x, y);
     if (from !== NEUTRAL) {
       const f = this.factions.get(from)!;
+      adjustBlock(f, x, y, -1);
       f.cells--;
       f.sumX -= x;
       f.sumY -= y;
@@ -92,6 +94,7 @@ export class World {
     }
     if (to !== NEUTRAL) {
       const f = this.factions.get(to)!;
+      adjustBlock(f, x, y, 1);
       f.cells++;
       f.sumX += x;
       f.sumY += y;
@@ -299,8 +302,15 @@ export class World {
     }
     const tempo = this.tempo();
     this.pocketMemo.clear();
+    // At most one faction re-routes its veins per tick, so the work never bunches up.
+    let veinRoutes = 1;
     for (const f of order) {
       if (!f.alive) continue;
+      if (f.stats.veins > 0 && now >= f.nextVeinAt && veinRoutes-- > 0) {
+        f.veins = computeVeins(this.grid, f);
+        // A little jitter so many factions don't all re-route on the same tick.
+        f.nextVeinAt = now + SPECIAL.veinSeconds * (0.8 + this.rng.next() * 0.4);
+      }
       if (f.stats.tribute > 0) this.earn(f, (f.stats.tribute * f.cells / 100) * DT);
       f.budget += f.stats.rate * tempo * (1 + f.stats.sizeBonus * Math.sqrt(f.cells)) * DT;
       if (f.budget < 1) continue;
@@ -337,7 +347,7 @@ export class World {
       return;
     }
     const def = this.factions.get(t.owner)!;
-    const p = conversionChance(this.grid, f.stats, f.id, def.stats, def.id, t.x, t.y, ctx.now, this.resistMult(f, def, t.x, t.y));
+    const p = conversionChance(this.grid, f.stats, f.id, def.stats, def.id, t.x, t.y, ctx.now, this.resistMult(f, def, t.x, t.y), this.powerMult(f, t.sx, t.sy));
     this.grid.markHit(t.x, t.y, ctx.now);
     if (this.rng.next() >= p) {
       this.emit({ type: 'hit', x: t.x, y: t.y, by: f.id, owner: def.id });
@@ -373,7 +383,7 @@ export class World {
 
   /** Attempt to convert (x, y) held by `def` for `att` (used by counterattacks). */
   private conquer(att: Faction, def: Faction, x: number, y: number, now: number, kind: CaptureKind, link: number) {
-    const p = conversionChance(this.grid, att.stats, att.id, def.stats, def.id, x, y, now, this.resistMult(att, def, x, y));
+    const p = conversionChance(this.grid, att.stats, att.id, def.stats, def.id, x, y, now, this.resistMult(att, def, x, y), this.powerMult(att, x, y));
     this.grid.markHit(x, y, now);
     if (this.rng.next() < p) this.convert(att, def, x, y, kind, link);
     else this.emit({ type: 'hit', x, y, by: att.id, owner: def.id });
@@ -399,7 +409,13 @@ export class World {
       m *= 1 + def.stats.capital * Math.max(0, 1 - d / SPECIAL.capitalRadius);
     }
     if (att.stats.siege > 0 && this.isPocket(def, x, y)) m *= Math.max(0.2, 1 - att.stats.siege);
+    if (def.stats.veins > 0 && onVein(def, x, y)) m *= 1 + def.stats.veins;
     return m;
+  }
+
+  /** Attack multiplier for `att` striking from its cell at (sx, sy): Veins feed the fronts they reach. */
+  powerMult(att: Faction, sx: number, sy: number): number {
+    return att.stats.veins > 0 && onVein(att, sx, sy) ? 1 + att.stats.veins : 1;
   }
 
   /** True if (x, y) belongs to a small group cut off from most of its faction. */
@@ -517,10 +533,12 @@ export class World {
       f.sumX = 0;
       f.sumY = 0;
       f.frontier.clear();
+      f.blockStats.clear();
     }
     this.grid.forEachOwned((x, y, o) => {
       const f = this.factions.get(o);
       if (!f) return;
+      adjustBlock(f, x, y, 1);
       f.cells++;
       f.sumX += x;
       f.sumY += y;
@@ -552,6 +570,9 @@ export class World {
     for (const f of this.factions.values()) {
       if ((counts.get(f.id) ?? 0) !== f.cells) problems.push(`${f.name}: cells cache ${f.cells} ≠ grid ${counts.get(f.id) ?? 0}`);
       if ((front.get(f.id) ?? 0) !== f.frontier.size) problems.push(`${f.name}: frontier size ${f.frontier.size} ≠ ${front.get(f.id) ?? 0}`);
+      let blockCells = 0;
+      for (const [n] of f.blockStats.values()) blockCells += n;
+      if (blockCells !== f.cells) problems.push(`${f.name}: block tallies ${blockCells} ≠ cells ${f.cells}`);
     }
     return problems;
   }

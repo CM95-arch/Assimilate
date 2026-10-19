@@ -61,6 +61,7 @@ export const BASE_STATS = {
   counter: 0,
   tribute: 0,
   capital: 0,
+  veins: 0,
 };
 
 /**
@@ -83,6 +84,17 @@ export const SPECIAL = {
   siegePocketCells: 150,
   /** Capital protection fades to nothing at this distance (cells) from home. */
   capitalRadius: 7,
+  /** Veins run over a coarse grid of blocks this many cells wide. */
+  veinBlock: 4,
+  /** A block carries a vein only if the faction holds at least this many of its cells. */
+  veinBlockMin: 6,
+  /** Most fronts a faction's vein network reaches, and how often (s) it is re-routed. */
+  veinTargets: 10,
+  veinSeconds: 2,
+  /** Huge territories route over doubled blocks until there are at most this many (keeps it cheap). */
+  veinMaxBlocks: 1500,
+  /** At most this many border cells are examined when picking fronts. */
+  veinFrontSample: 3000,
 };
 
 export const COMBAT = {

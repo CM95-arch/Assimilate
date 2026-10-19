@@ -80,6 +80,12 @@ export const UPGRADES: UpgradeDef[] = [
     effect: (l) => `${pct(0.06 * l)} chance to chain`,
   },
   {
+    id: 'veins', name: 'Veins', category: 'combat', baseCost: 45, costGrowth: 1.7, maxLevel: 10, unlockEarned: 150,
+    blurb: 'A supply network grows from your capital to your busiest fronts. Ground on a vein attacks and holds harder. Cut it and that front weakens.',
+    apply: (s, l) => { s.veins += 0.12 * l; },
+    effect: (l) => `+${pct(0.12 * l)} power and resistance on veins`,
+  },
+  {
     id: 'siege', name: 'Siege', category: 'combat', baseCost: 50, costGrowth: 1.7, maxLevel: 8, unlockEarned: 180,
     blurb: 'Enemy pockets cut off from their main territory lose resistance. Encircle them and they crumble.',
     apply: (s, l) => { s.siege += 0.08 * l; },

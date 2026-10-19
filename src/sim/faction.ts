@@ -3,6 +3,7 @@
 
 import { deriveStats, neutralBehavior, type Behavior, type Stats } from '../config/upgrades';
 import { KeySet } from './grid';
+import type { VeinNet } from './veins';
 
 export interface Faction {
   id: number;
@@ -29,6 +30,8 @@ export interface Faction {
   // ----- territory caches (rebuilt from the grid on load) -----
   cells: number;
   frontier: KeySet;
+  /** Per 4×4 block (SPECIAL.veinBlock): [cells held, sum of x, sum of y]. Kept up to date by transfer. */
+  blockStats: Map<number, [number, number, number]>;
   sumX: number;
   sumY: number;
   minX: number;
@@ -40,6 +43,9 @@ export interface Faction {
   converted: number;
   lost: number;
   peakCells: number;
+  /** Supply network (Veins upgrade); derived, recomputed every few seconds, not saved. */
+  veins: VeinNet | null;
+  nextVeinAt: number;
 }
 
 export function createFaction(id: number, name: string, color: string, isPlayer: boolean, profile = '', taste: Record<string, number> = {}): Faction {
@@ -47,9 +53,10 @@ export function createFaction(id: number, name: string, color: string, isPlayer:
     id, name, color, isPlayer, profile, taste,
     levels: {}, behavior: neutralBehavior(), stats: deriveStats({}),
     energy: 0, earned: 0, alive: true, spawnedAt: 0, homeX: 0, homeY: 0, budget: 0,
-    cells: 0, frontier: new KeySet(), sumX: 0, sumY: 0,
+    cells: 0, frontier: new KeySet(), blockStats: new Map(), sumX: 0, sumY: 0,
     minX: 0, maxX: 0, minY: 0, maxY: 0,
     claimed: 0, converted: 0, lost: 0, peakCells: 0,
+    veins: null, nextVeinAt: 0,
   };
 }
 

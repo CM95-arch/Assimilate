@@ -123,8 +123,8 @@ export function groupSize(grid: Grid, x: number, y: number, owner: number, limit
  * Power and resistance are each boosted by how many sides the two sides hold around the cell,
  * and the defender's resistance grows the longer it has held the cell.
  */
-export function conversionChance(grid: Grid, a: Stats, attId: number, d: Stats, defId: number, x: number, y: number, now: number, resistMult = 1): number {
-  const attack = a.power * (1 + a.pressure * grid.sides(x, y, attId));
+export function conversionChance(grid: Grid, a: Stats, attId: number, d: Stats, defId: number, x: number, y: number, now: number, resistMult = 1, powerMult = 1): number {
+  const attack = a.power * powerMult * (1 + a.pressure * grid.sides(x, y, attId));
   const held = Math.min(1, Math.max(0, now - grid.since(x, y)) / Math.max(1, d.entrenchSeconds));
   const defend = d.resistance * resistMult * (1 + d.reinforcement * grid.sides(x, y, defId)) * (1 + d.entrench * held);
   return COMBAT.conversionScale * (attack / (attack + defend));

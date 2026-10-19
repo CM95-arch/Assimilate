@@ -70,12 +70,13 @@ the behaviour stats.
 
 A rival's sliders come from its personality plus a random ±0.3 twist each.
 
-**Upgrades (16):**
+**Upgrades (17):**
 - **Expansion:** Expansion Rate; Outposts (some attempts plant a cell 3–5 squares beyond the
   border, on clear open ground, with a ring effect); Coordination (more border sampled per
   attempt, so slider settings are followed more precisely).
 - **Combat:** Conversion Power; Pressure; Chain Reaction (a conversion may flip a neighbouring
-  cell of the same enemy, up to 6 links, each 40% less likely, popping as a cascade); Siege
+  cell of the same enemy, up to 6 links, each 40% less likely, popping as a cascade); Veins
+  (see below); Siege
   (enemy groups under 150 cells and under half their faction lose resistance).
 - **Defense:** Resistance; Reinforcement; Entrenchment; Counterattack (a failed attack on you
   may be answered at once against the attacking cell); Capital (resistance bonus up to
@@ -86,6 +87,19 @@ A rival's sliders come from its personality plus a random ±0.3 twist each.
 The four starters are available from the first second. The rest unlock as you earn energy
 during the run, and rivals follow the same unlock rule. New upgrades will be chosen from the
 creative list in the phase report.
+
+## Veins (0.2.5)
+
+A supply network drawn across the whole territory. Territory is tallied in 4×4 blocks; the
+tallies update on every capture, so nothing is rescanned. Every ~2 s (at most one faction per
+tick) the faction routes from its capital's block to up to 10 well-spread fronts (blocks whose
+border touches an enemy, or its outermost tips in peacetime). Routing is a cheapest-path search
+that prefers fully held blocks, with a fixed per-faction irregularity so routes meander. Routes
+are smoothed into curves, drawn through the middle of the faction's own cells (thicker where they
+feed more fronts), with pulses flowing outward. Cells in a vein block get +12% power and
+resistance per level. Cutting the territory re-routes the veins around the break, or cuts a
+front off. A cut needs to be roughly a block thick to sever a vein. Very large territories
+route on doubled blocks (8×8, 16×16…) so a re-route stays around 7 ms even at 500,000 cells.
 
 ## Pace (0.2.4)
 

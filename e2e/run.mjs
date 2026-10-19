@@ -531,14 +531,14 @@ for (const [name, value, expect] of [
   const { ctx, page } = await newPage();
   await page.goto(APP_URL);
   await page.waitForTimeout(300);
-  await test('scale 10 battle on a phone: 60 fps, cheap frames, and unchanged frames are skipped', async () => {
+  await test('scale 10 battle on a phone (every faction with Veins): 60 fps, cheap frames, unchanged frames skipped', async () => {
     await dismissTip(page);
     const setup = await G(page, () => {
       const a = window.__assimilate;
       const w = a.game.world;
-      for (const f of w.factions.values()) a.grant(f.id, { rate: 60, resistance: 20, power: 20 });
+      for (const f of w.factions.values()) a.grant(f.id, { rate: 60, resistance: 20, power: 20, veins: 10 });
       // A player strong enough to survive, so the map keeps changing during the measurement.
-      a.grant(1, { resistance: 60, power: 60, reinforcement: 20, capital: 10, counter: 8 });
+      a.grant(1, { resistance: 60, power: 60, reinforcement: 20, capital: 10, counter: 8, veins: 10 });
       let n = 0;
       while (a.game.camera.level < 9 && n < 30000 && !w.ended) {
         w.step();
@@ -569,9 +569,10 @@ for (const [name, value, expect] of [
       const redraws = (a.renderer.frames - f0) / ((performance.now() - s0) / 1000);
       t.sort((x, y) => x - y);
       d.sort((x, y) => x - y);
-      return { frame: t[45], draw: d[45], redraws };
+      return { frame: t[45], slow: t[81], draw: d[45], redraws };
     });
-    console.log(`      ${setup.total} cells on the map; frame ${r.frame.toFixed(1)} ms, draw ${r.draw.toFixed(1)} ms, ${r.redraws.toFixed(0)} redraws/s`);
+    console.log(`      ${setup.total} cells on the map; frame ${r.frame.toFixed(1)} ms (90th pct ${r.slow.toFixed(1)}), draw ${r.draw.toFixed(1)} ms, ${r.redraws.toFixed(0)} redraws/s`);
+    assert(r.slow < 34, `frequent hitches: 90th percentile ${r.slow} ms`);
     assert(r.frame < 22, `slow frames: ${r.frame} ms`);
     assert(r.draw < 5, `expensive draws: ${r.draw} ms`);
     assert(r.redraws < 30, `redrawing unchanged frames (${r.redraws}/s)`);

@@ -22,12 +22,12 @@ export const PROFILES: Profile[] = [
   {
     id: 'fortress', name: 'Fortress', summary: 'Slow growth, high resistance, strong reinforcement.',
     behavior: { focus: -0.3, shape: -0.8, reach: -0.5, posture: -0.8 },
-    weights: { resistance: 3, reinforcement: 2.2, entrenchment: 2, capital: 1.8, counter: 1.6, rate: 0.6, yield: 0.8, power: 0.3 },
+    weights: { resistance: 3, veins: 1.2, reinforcement: 2.2, entrenchment: 2, capital: 1.8, counter: 1.6, rate: 0.6, yield: 0.8, power: 0.3 },
   },
   {
     id: 'conqueror', name: 'Conqueror', summary: 'Strong conversions and aggressive pushes, weaker economy.',
     behavior: { focus: 0.8, shape: -0.2, reach: 0.3, posture: 0.4 },
-    weights: { power: 3, pressure: 1.8, chain: 1.8, siege: 1.4, conquestBonus: 1.6, rate: 1, yield: 0.3, efficiency: 0.1 },
+    weights: { power: 3, veins: 1.4, pressure: 1.8, chain: 1.8, siege: 1.4, conquestBonus: 1.6, rate: 1, yield: 0.3, efficiency: 0.1 },
   },
   {
     id: 'opportunist', name: 'Opportunist', summary: 'Moderate strength; hunts weak points and exposed borders.',
@@ -37,7 +37,7 @@ export const PROFILES: Profile[] = [
   {
     id: 'balanced', name: 'Balanced', summary: 'No extreme specialisation; generally reliable.',
     behavior: { focus: 0, shape: 0, reach: 0, posture: 0 },
-    weights: { rate: 1.6, power: 1.4, resistance: 1.4, yield: 1.2, tribute: 1, capital: 0.8, reinforcement: 0.8, conquestBonus: 0.7, counter: 0.6 },
+    weights: { rate: 1.6, power: 1.4, resistance: 1.4, yield: 1.2, veins: 0.9, tribute: 1, capital: 0.8, reinforcement: 0.8, conquestBonus: 0.7, counter: 0.6 },
   },
 ];
 

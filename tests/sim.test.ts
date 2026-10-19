@@ -6,6 +6,7 @@ import { chooseTarget, conversionChance, type Candidate } from '../src/sim/expan
 import { createFaction, type Faction } from '../src/sim/faction';
 import { cellKey, Grid, keyX, keyY, NEUTRAL } from '../src/sim/grid';
 import { Rng } from '../src/sim/rng';
+import { computeVeins, onVein } from '../src/sim/veins';
 import { PLAYER, World } from '../src/sim/world';
 
 const run = (w: World, seconds: number) => {
@@ -540,5 +541,59 @@ describe('special upgrades', () => {
     expect(near).toBeGreaterThan(1);
     expect(near).toBeLessThan(home);
     expect(far).toBe(1);
+  });
+});
+
+describe('veins', () => {
+  /** A 40×12 strip of ours with the enemy along its right edge; home on the far left. */
+  const strip = () => {
+    const w = lab(8);
+    const rival = createFaction(2, 'Rival', '#f00', false, 'balanced');
+    w.factions.set(2, rival);
+    for (let y = 0; y < 12; y++) for (let x = 0; x < 48; x++) w.transfer(x, y, x < 40 ? PLAYER : 2);
+    w.player.homeX = 2;
+    w.player.homeY = 6;
+    grantLevels(w.player, { veins: 5 });
+    return { w, rival };
+  };
+
+  it('build a network from the capital to the front', () => {
+    const { w } = strip();
+    w.player.veins = computeVeins(w.grid, w.player);
+    const net = w.player.veins;
+    expect(net.routes.length).toBeGreaterThan(0);
+    const first = net.routes[0];
+    expect(first.pts[0]).toBeLessThan(8);
+    expect(first.pts[first.pts.length - 2]).toBeGreaterThan(32);
+    expect(onVein(w.player, 3, 6)).toBe(true);
+    // Drawn routes stay on our own ground.
+    for (const r of net.routes) for (let i = 0; i < r.pts.length; i += 2) expect(r.pts[i]).toBeLessThan(41);
+  });
+
+  it('cells on a vein attack and defend harder', () => {
+    const { w, rival } = strip();
+    w.player.veins = computeVeins(w.grid, w.player);
+    const r = w.player.veins.routes[0];
+    const ex = Math.floor(r.pts[r.pts.length - 2]);
+    const ey = Math.floor(r.pts[r.pts.length - 1]);
+    expect(w.powerMult(w.player, ex, ey)).toBeCloseTo(1.6, 5);
+    expect(w.resistMult(rival, w.player, ex, ey)).toBeCloseTo(1.6, 5);
+    expect(w.powerMult(rival, 44, 6)).toBe(1);
+  });
+
+  it('a cut through the territory (about a block thick) severs the fronts beyond it', () => {
+    const { w } = strip();
+    // Veins route over 4×4 blocks, so a cut must be roughly that thick to sever them.
+    for (let y = 0; y < 12; y++) for (let x = 17; x < 25; x++) w.transfer(x, y, 2);
+    w.player.veins = computeVeins(w.grid, w.player);
+    for (const r of w.player.veins.routes) for (let i = 0; i < r.pts.length; i += 2) expect(r.pts[i]).toBeLessThan(25);
+    expect(onVein(w.player, 36, 6)).toBe(false);
+  });
+
+  it('re-routes automatically every few seconds while the game runs', () => {
+    const { w } = strip();
+    run(w, 3);
+    expect(w.player.veins?.routes.length).toBeGreaterThan(0);
+    expect(w.audit()).toEqual([]);
   });
 });

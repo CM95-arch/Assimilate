@@ -11,6 +11,14 @@ const hasRoundRect =
   typeof Path2D !== 'undefined' && 'roundRect' in Path2D.prototype &&
   typeof CanvasRenderingContext2D !== 'undefined' && 'roundRect' in CanvasRenderingContext2D.prototype;
 
+/** Vein colours: light lines on your black territory, darker shades on pastel rivals. */
+function veinColors(hex: string, isPlayer: boolean): [string, string] {
+  if (isPlayer) return ['#6F6F6A', '#D9D8D2'];
+  const c = [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16));
+  const shade = (f: number) => `rgb(${c.map((v) => Math.round(v * f)).join(',')})`;
+  return [shade(0.62), shade(0.4)];
+}
+
 export interface FrameInfo {
   drawMs: number;
   cellsDrawn: number;
@@ -262,6 +270,8 @@ export class Renderer {
       }
     });
 
+    this.drawVeins(world, g);
+
     // Outposts: a square outline grows from the new cell and fades.
     anims.forEachRing(now, (r, t) => {
       const cx = g.ox + (r.x + 0.5) * g.pitch;
@@ -277,6 +287,54 @@ export class Renderer {
     this.drawCapitals(world, g);
     this.lastDrawn = drawn;
     this.info = { drawMs: performance.now() - t0, cellsDrawn: drawn };
+  }
+
+  /**
+   * Veins: each faction's supply network as lines over its territory, thicker where more fronts
+   * are fed, with pulses travelling outward (moving with game time, so a still game stays still).
+   */
+  private drawVeins(world: World, g: Geometry) {
+    const ctx = this.ctx;
+    const d = this.dpr;
+    const t = world.time;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const f of world.factions.values()) {
+      const net = f.veins;
+      if (!f.alive || !net || net.routes.length === 0 || f.stats.veins <= 0) continue;
+      const [base, pulse] = veinColors(f.color, f.isPlayer);
+      const px = (v: number) => g.ox + v * g.pitch;
+      const py = (v: number) => g.oy + v * g.pitch;
+      // Width grows with how many fronts a stretch feeds, so trunks read from far away.
+      const width = (flow: number) => Math.max((1.3 + 1.2 * Math.sqrt(flow)) * d, Math.min(g.pitch * 0.5, g.pitch * 0.14 * Math.sqrt(flow)));
+      ctx.strokeStyle = base;
+      ctx.globalAlpha = 0.9;
+      for (const r of net.routes) {
+        for (let i = 0; i + 3 < r.pts.length; i += 2) {
+          ctx.lineWidth = width(r.flow[i / 2]);
+          ctx.beginPath();
+          ctx.moveTo(px(r.pts[i]), py(r.pts[i + 1]));
+          ctx.lineTo(px(r.pts[i + 2]), py(r.pts[i + 3]));
+          ctx.stroke();
+        }
+      }
+      // Pulses: bright dashes that travel along each whole route, from home out to the front.
+      ctx.strokeStyle = pulse;
+      ctx.globalAlpha = 0.95;
+      const dash = Math.max(3 * d, g.pitch * 1.6);
+      const gap = Math.max(18 * d, g.pitch * 9);
+      ctx.setLineDash([dash, gap]);
+      ctx.lineDashOffset = -((t * 0.9) % 1) * (dash + gap);
+      ctx.lineWidth = Math.max(1.2 * d, g.pitch * 0.12);
+      for (const r of net.routes) {
+        ctx.beginPath();
+        ctx.moveTo(px(r.pts[0]), py(r.pts[1]));
+        for (let i = 2; i < r.pts.length; i += 2) ctx.lineTo(px(r.pts[i]), py(r.pts[i + 1]));
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
   }
 
   /** Capital: a small inset square marks the home cell of any faction that has the upgrade. */
