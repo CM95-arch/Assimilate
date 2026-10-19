@@ -153,6 +153,28 @@ export class Renderer {
     return true;
   }
 
+  /** Everything outside the arena is plain background: the grid simply stops at its edge. */
+  private blankOutside(world: World, g: Geometry) {
+    const ctx = this.ctx;
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    const x0 = Math.max(0, Math.min(W, Math.round(g.ox)));
+    const y0 = Math.max(0, Math.min(H, Math.round(g.oy)));
+    const x1 = Math.max(0, Math.min(W, Math.round(g.ox + world.size * g.pitch)));
+    const y1 = Math.max(0, Math.min(H, Math.round(g.oy + world.size * g.pitch)));
+    ctx.fillStyle = COLORS.background;
+    ctx.fillRect(0, 0, W, y0);
+    ctx.fillRect(0, y1, W, H - y1);
+    ctx.fillRect(0, y0, x0, y1 - y0);
+    ctx.fillRect(x1, y0, W - x1, y1 - y0);
+    // At far zoom open ground isn't drawn, so outline the arena instead.
+    if (g.pitch / this.dpr < ANIM.neutralHidePx) {
+      ctx.strokeStyle = COLORS.neutral;
+      ctx.lineWidth = Math.max(1, this.dpr);
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+    }
+  }
+
   /** Packed RGBA (little-endian ABGR) for a faction id, for chunk images. */
   private rgba(world: World, id: number): number {
     let v = this.colorCache.get(id);
@@ -235,6 +257,7 @@ export class Renderer {
       ctx.fillStyle = COLORS.background;
       ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
+    this.blankOutside(world, g);
     const drawn = pitchCss < ANIM.bitmapBelowPx ? this.drawTerritoryImages(world, g) : this.drawTerritoryCells(world, g, anims, now);
     const bitmap = pitchCss < ANIM.bitmapBelowPx;
 
@@ -262,19 +285,6 @@ export class Renderer {
       }
     });
 
-    // Outposts: a square outline grows from the new cell and fades.
-    anims.forEachRing(now, (r, t) => {
-      const cx = g.ox + (r.x + 0.5) * g.pitch;
-      const cy = g.oy + (r.y + 0.5) * g.pitch;
-      const size = g.pitch * (1 + t * 3);
-      ctx.globalAlpha = (1 - t) * 0.8;
-      ctx.strokeStyle = r.color;
-      ctx.lineWidth = Math.max(1, g.pitch * 0.12);
-      ctx.strokeRect(cx - size / 2, cy - size / 2, size, size);
-      ctx.globalAlpha = 1;
-    });
-
-    this.drawCapitals(world, g);
     this.drawFlag(world, g);
     this.lastDrawn = drawn;
     this.info = { drawMs: performance.now() - t0, cellsDrawn: drawn };
@@ -307,21 +317,6 @@ export class Renderer {
     ctx.stroke(path);
     ctx.fillStyle = f.color;
     ctx.fill(path);
-  }
-
-  /** Capital: a small inset square marks the home cell of any faction that has the upgrade. */
-  private drawCapitals(world: World, g: Geometry) {
-    if (g.pitch / this.dpr < ANIM.noGapBelowPx) return;
-    const ctx = this.ctx;
-    for (const f of world.factions.values()) {
-      if (!f.alive || f.stats.capital <= 0 || world.grid.owner(f.homeX, f.homeY) !== f.id) continue;
-      if (f.homeX < g.x0 || f.homeX > g.x1 || f.homeY < g.y0 || f.homeY > g.y1) continue;
-      const s = g.pitch * 0.34;
-      const cx = g.ox + (f.homeX + 0.5) * g.pitch;
-      const cy = g.oy + (f.homeY + 0.5) * g.pitch;
-      ctx.fillStyle = COLORS.background;
-      ctx.fillRect(Math.round(cx - s / 2), Math.round(cy - s / 2), Math.round(s), Math.round(s));
-    }
   }
 
   /** Far view: blit each chunk's cached image (nearest-neighbour), then cut the gaps as lines. */

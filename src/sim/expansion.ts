@@ -11,10 +11,13 @@
 //   where we are being attacked and cells we lost recently (threat, recovery) or weakly-defended,
 //   already-touched enemy cells (flanking).
 //
+// Rivals also gang up on whoever leads the match: the leader's cells look more attractive to them
+// (and other rivals' cells less), the clearer the lead.
+//
 // A rally flag makes part of every attempt start from the border nearest the flag and favour
 // steps toward it, so the territory leans that way without stopping elsewhere.
 
-import { COMBAT, FLAG } from '../config/balance';
+import { COMBAT, FLAG, LEADER } from '../config/balance';
 import type { Stats } from '../config/upgrades';
 import type { Faction } from './faction';
 import { cellKey, DX, DY, NEUTRAL, keyX, keyY, type Grid } from './grid';
@@ -39,6 +42,12 @@ export interface Context {
   cy: number;
   /** Typical radius of the faction's territory, for momentum. */
   r: number;
+  /** The arena: coordinates from `lo` up to (not including) `hi` on both axes. */
+  lo: number;
+  hi: number;
+  /** The faction rivals gang up on (0 = nobody), and how strongly (≥ 1). */
+  leader: number;
+  leaderFocus: number;
 }
 
 /** Preference weight for target (x, y), reached from own border cell (sx, sy). */
@@ -54,6 +63,11 @@ export function score(c: Context, x: number, y: number, sx: number, sy: number):
       const exposure = 1 - grid.sides(x, y, owner) / 4;
       const touch = grid.sides(x, y, f.id) / 4;
       w *= Math.exp(s.flanking * (exposure + touch - 0.5));
+    }
+    // Rivals gang up on the leader and go easier on each other meanwhile.
+    if (!f.isPlayer && c.leader && f.id !== c.leader) {
+      if (owner === c.leader) w *= c.leaderFocus;
+      else w *= 1 - (1 - LEADER.truce) * ((c.leaderFocus - 1) / (LEADER.maxFocus - 1));
     }
   }
   // Shape: positive bias fills gaps (compact), negative reaches into open space (branches).
@@ -87,7 +101,7 @@ export function chooseTarget(c: Context, rng: Rng, out?: Candidate[]): Candidate
       const x = sx + DX[d];
       const y = sy + DY[d];
       const owner = grid.owner(x, y);
-      if (owner === f.id) continue;
+      if (owner === f.id || x < c.lo || y < c.lo || x >= c.hi || y >= c.hi) continue;
       const weight = score(c, x, y, sx, sy);
       list.push({ x, y, owner, weight, sx, sy });
       total += weight;
@@ -142,12 +156,10 @@ export function groupSize(grid: Grid, x: number, y: number, owner: number, limit
 
 /**
  * Chance that faction `att` converts the cell at (x, y) held by `def`.
- * Power and resistance are each boosted by how many sides the two sides hold around the cell,
- * and the defender's resistance grows the longer it has held the cell.
+ * Power and resistance are each boosted by how many sides the two sides hold around the cell.
  */
-export function conversionChance(grid: Grid, a: Stats, attId: number, d: Stats, defId: number, x: number, y: number, now: number, resistMult = 1): number {
+export function conversionChance(grid: Grid, a: Stats, attId: number, d: Stats, defId: number, x: number, y: number, resistMult = 1): number {
   const attack = a.power * (1 + a.pressure * grid.sides(x, y, attId));
-  const held = Math.min(1, Math.max(0, now - grid.since(x, y)) / Math.max(1, d.entrenchSeconds));
-  const defend = d.resistance * resistMult * (1 + d.reinforcement * grid.sides(x, y, defId)) * (1 + d.entrench * held);
+  const defend = d.resistance * resistMult * (1 + d.reinforcement * grid.sides(x, y, defId));
   return COMBAT.conversionScale * (attack / (attack + defend));
 }

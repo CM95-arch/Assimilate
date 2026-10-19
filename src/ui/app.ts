@@ -9,17 +9,19 @@ import type { Panel, UiContext } from './context';
 import { h, setAttr, setText, svg } from './dom';
 import { reportError } from './errors';
 import { Banner, closeTopModal, modalOpen, openModal, Tip, Toasts } from './overlay';
-import { prestigePanel } from './panels/prestige';
+import { leaguePanel } from './panels/league';
 import { settingsPanel } from './panels/settings';
 import { statsPanel } from './panels/stats';
 import { territoryPanel } from './panels/territory';
 import { upgradesPanel } from './panels/upgrades';
 import { PROFILE_BY_ID } from '../config/profiles';
+import { MATCH } from '../config/balance';
+import { PLAYER } from '../sim/world';
 
 const PANELS: Record<string, Panel> = {
   territory: territoryPanel,
   upgrades: upgradesPanel,
-  prestige: prestigePanel,
+  league: leaguePanel,
   stats: statsPanel,
   settings: settingsPanel,
 };
@@ -31,7 +33,7 @@ export interface AppHooks {
   save: () => boolean;
   lastSavedAt: () => number;
   applySettings: () => void;
-  newRun: () => void;
+  newRun: (league?: number) => void;
   reset: () => void;
 }
 
@@ -47,6 +49,7 @@ export class App {
   private readonly speedBtns = [...document.querySelectorAll<HTMLButtonElement>('#speed button')];
   private readonly recenterBtn = document.getElementById('recenter-btn') as HTMLButtonElement;
   private readonly diag = document.getElementById('diag')!;
+  private readonly standings = document.getElementById('standings')!;
   private readonly hud = {
     enV: document.querySelector('#stat-energy [data-v]')!,
     enR: document.querySelector('#stat-energy [data-r]')!,
@@ -73,7 +76,7 @@ export class App {
       save: hooks.save,
       lastSavedAt: hooks.lastSavedAt,
       applySettings: hooks.applySettings,
-      confirmNewRun: () => this.confirmNewRun(),
+      confirmNewRun: (league?: number) => this.confirmNewRun(league),
       confirmReset: () => this.confirmReset(),
       rerender: () => this.openTab && this.renderPanel(this.openTab),
       memory: {},
@@ -185,22 +188,29 @@ export class App {
     this.layout();
   }
 
-  private confirmNewRun() {
+  private confirmNewRun(league = this.game.world.league) {
+    // A finished match needs no confirmation.
+    if (this.game.world.ended) {
+      this.startNewRun(league);
+      return;
+    }
+    const same = league === this.game.world.league;
     openModal({
       id: 'confirm-new',
-      title: 'Start a new run?',
-      lead: 'Your territory, energy and upgrades for this run are lost, and a new world begins. Lifetime statistics are kept.',
+      title: same ? 'Restart this match?' : `Leave for League ${league}?`,
+      lead: 'This match is abandoned (it doesn’t count as a loss) and a new one begins. Statistics and league progress are kept.',
       actions: [
-        { label: 'New run', kind: 'primary', id: 'confirm', onClick: () => this.startNewRun() },
+        { label: same ? 'Restart match' : `Play League ${league}`, kind: 'primary', id: 'confirm', onClick: () => this.startNewRun(league) },
         { label: 'Cancel', kind: 'ghost', id: 'cancel' },
       ],
     });
   }
 
-  private startNewRun() {
-    this.hooks.newRun();
+  private startNewRun(league?: number) {
+    this.hooks.newRun(league);
     this.closeSheet();
-    this.banner.show('New run', 'A fresh world');
+    const l = this.game.world.league;
+    this.banner.show(`League ${l}`, `First to ${Math.round(MATCH.winShare * 100)}% of the arena wins`);
     this.refreshHud();
   }
 
@@ -274,7 +284,7 @@ export class App {
     const m = openModal({
       id: 'confirm-reset',
       title: 'Reset all progress?',
-      lead: 'This deletes your current run, statistics and settings on this device. It cannot be undone.',
+      lead: 'This deletes your current match, league progress, statistics and settings on this device. It cannot be undone.',
       body: [h('label', { class: 'check', for: 'reset-check' }, check, h('span', { text: 'I understand everything will be deleted' }))],
       actions: [
         { label: 'Delete everything', kind: 'danger', id: 'confirm', disabled: true, onClick: () => this.hooks.reset() },
@@ -289,7 +299,7 @@ export class App {
 
   showIntro() {
     if (this.game.settings.introSeen) return;
-    this.tip.show('You are black. Your territory expands on its own, and so do your rivals. Tap the map to plant your flag and your territory leans that way. Spend energy on Upgrades to make it stronger.', () => {
+    this.tip.show(`You are black. Your territory expands on its own, and so do your rivals. First to ${Math.round(MATCH.winShare * 100)}% of the arena wins, but rivals gang up on whoever leads. Tap the map to plant a flag your territory leans toward, and spend energy on Upgrades.`, () => {
       this.game.settings.introSeen = true;
       this.hooks.save();
     });
@@ -339,14 +349,11 @@ export class App {
         this.toasts.show(`Contact: ${name(e.faction)}`);
         this.tabs[0].querySelector('.dot')?.removeAttribute('hidden');
         break;
-      case 'spawn':
-        if (w.time > 1) this.toasts.show(`New rival found: ${name(e.faction)}`);
-        break;
       case 'eliminated':
         this.toasts.show(`${name(e.faction)} eliminated${e.byPlayer ? ' by you' : ''}`, e.byPlayer ? 'good' : 'info');
         break;
-      case 'defeat':
-        this.onDefeat();
+      case 'match-end':
+        this.showMatchEnd();
         break;
       case 'flag-reached':
         this.toasts.show('Flag reached. Tap the map to plant it again');
@@ -357,21 +364,43 @@ export class App {
     }
   }
 
-  onDefeat() {
-    const w = this.game.world;
+  /** The end-of-match summary: who won, how it went, and what to play next. */
+  showMatchEnd() {
+    const g = this.game;
+    const w = g.world;
     const p = w.player;
+    const won = w.winner === PLAYER;
+    const rival = w.factions.get(w.winner);
+    const league = w.league;
+    const next = Math.min(league + 1, g.progress.unlocked);
+    const goal = `${Math.round(MATCH.winShare * 100)}%`;
+    const title = won ? 'Victory' : rival ? `${rival.name} took the arena` : 'Your territory has fallen';
+    const lead = won
+      ? `You held ${goal} of the arena in ${fmtDuration(w.time)}.${next > league ? ` League ${next} is open.` : ''}`
+      : rival
+        ? `${rival.name} (${PROFILE_BY_ID[rival.profile]?.name ?? 'Rival'}) reached ${goal} after ${fmtDuration(w.time)}.`
+        : `You were wiped out after ${fmtDuration(w.time)}.`;
+    const actions = won && next > league
+      ? [
+          { label: `Play League ${next}`, kind: 'primary' as const, id: 'next', onClick: () => this.startNewRun(next) },
+          { label: `Replay League ${league}`, kind: 'ghost' as const, id: 'again', onClick: () => this.startNewRun(league) },
+        ]
+      : [{ label: won ? 'Play again' : 'Try again', kind: 'primary' as const, id: 'again', onClick: () => this.startNewRun(league) }];
     openModal({
-      id: 'defeat',
-      title: 'Your territory has fallen',
-      lead: `You held up to ${fmt(p.peakCells)} cells over ${fmtDuration(w.time)}. Prestige rewards for finished runs arrive in a later update; for now, start a new run.`,
+      id: 'match-end',
+      title,
+      lead,
       body: [h('dl', { class: 'kv' },
-        h('dt', { text: 'Open cells claimed' }), h('dd', { text: fmt(p.claimed) }),
+        h('dt', { text: 'League' }), h('dd', { text: String(league) }),
+        h('dt', { text: 'Your largest share' }), h('dd', { text: `${Math.round((p.peakCells / (w.size * w.size)) * 100)}%` }),
         h('dt', { text: 'Enemy cells converted' }), h('dd', { text: fmt(p.converted) }),
+        h('dt', { text: 'Cells lost' }), h('dd', { text: fmt(p.lost) }),
         h('dt', { text: 'Energy earned' }), h('dd', { text: fmt(p.earned) }),
       )],
       dismissible: false,
-      actions: [{ label: 'Start a new run', kind: 'primary', id: 'new', onClick: () => this.startNewRun() }],
+      actions,
     });
+    if (g.settings.sound) (won ? g.audio.purchase() : g.audio.deny());
   }
 
   refreshHud() {
@@ -380,18 +409,37 @@ export class App {
     const p = w.player;
     setText(this.hud.enV, fmt(p.energy));
     setText(this.hud.enR, `+${fmt(Math.max(0, w.energyRate()))}/s`);
-    setText(this.hud.terV, fmt(p.cells));
-    const cr = w.cellRate();
-    setText(this.hud.terR, `${cr >= 0 ? '+' : '−'}${Math.abs(cr) < 10 ? Math.abs(cr).toFixed(1) : fmt(Math.abs(cr))}/s`);
+    const area = w.size * w.size;
+    setText(this.hud.terV, `${Math.floor((p.cells / area) * 100)}%`);
+    setText(this.hud.terR, `${fmt(p.cells)} of ${fmt(w.winCells)} cells`);
+    this.refreshStandings();
     const st = g.status();
     setText(this.hud.stV, st);
     const rivals = w.contacts().length;
-    setText(this.hud.stR, `${rivals ? `${rivals} front${rivals > 1 ? 's' : ''}` : `Scale ${g.camera.level + 1}`} · ${g.paused ? 'paused' : `${g.speed}×`}`);
+    const where = st === 'Leading' ? 'rivals target you' : rivals ? `${rivals} front${rivals > 1 ? 's' : ''}` : `League ${w.league}`;
+    setText(this.hud.stR, `${where} · ${g.paused ? 'paused' : `${g.speed}×`}`);
     this.hud.status.classList.toggle('war', st === 'At war');
     this.hud.status.classList.toggle('losing', st === 'Losing ground');
     this.hud.status.classList.toggle('defeated', st === 'Defeated');
+    this.hud.status.classList.toggle('leading', st === 'Leading');
+    this.hud.status.classList.toggle('victory', st === 'Victory');
     this.tabs[1].querySelector('.dot')?.toggleAttribute('hidden', !anyAffordable(p));
     this.recenterBtn.hidden = !g.camera.adjusted;
+  }
+
+  /** The standings bar: each faction's share of the arena, biggest first, with the goal marked. */
+  private refreshStandings() {
+    const w = this.game.world;
+    const area = w.size * w.size;
+    const alive = [...w.factions.values()].filter((f) => f.alive && f.cells > 0).sort((a, b) => b.cells - a.cells);
+    const bars = this.standings.querySelector('.bars')!;
+    if (bars.children.length !== alive.length) bars.replaceChildren(...alive.map(() => h('span')));
+    alive.forEach((f, i) => {
+      const el = bars.children[i] as HTMLElement;
+      el.style.width = `${((f.cells / area) * 100).toFixed(2)}%`;
+      el.style.background = f.color;
+    });
+    (this.standings.querySelector('.goal') as HTMLElement).style.left = `${MATCH.winShare * 100}%`;
   }
 
   private refreshDiag() {
@@ -407,7 +455,7 @@ export class App {
     ];
     for (const f of w.factions.values()) {
       if (!f.alive) continue;
-      lines.push(`${f.name.padEnd(6)} ${String(f.cells).padStart(6)} border ${String(f.frontier.size).padStart(5)} ${w.isDormant(f) ? 'dormant' : ''}`);
+      lines.push(`${f.name.padEnd(6)} ${String(f.cells).padStart(6)} border ${String(f.frontier.size).padStart(5)}${w.leader === f.id ? ` leader ×${w.leaderFocus.toFixed(1)}` : ''}`);
     }
     setText(this.diag, lines.join('\n'));
   }

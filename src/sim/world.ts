@@ -1,7 +1,7 @@
-// The simulation: an infinite grid, the factions on it and a fixed tick. Pure logic,
+// The simulation: one match in a square arena, the factions in it and a fixed tick. Pure logic,
 // deterministic per seed, no rendering. Shared by live play, tests and scripts.
 
-import { COLORS, ENERGY, RIVALS, SPECIAL, START, TEMPO, TIME } from '../config/balance';
+import { COMBAT, COLORS, ENERGY, LEADER, leagueInfo, MATCH, SPECIAL, START, TEMPO, TIME, type League } from '../config/balance';
 import { UPGRADES } from '../config/upgrades';
 import { PROFILE_BY_ID, PROFILES } from '../config/profiles';
 import { buy, isUnlocked, upgradeCost } from './economy';
@@ -13,7 +13,7 @@ import { Rng } from './rng';
 export const PLAYER = 1;
 
 /** Why a capture happened, for its visual effect. */
-export type CaptureKind = 'normal' | 'outpost' | 'chain' | 'counter';
+export type CaptureKind = 'normal' | 'chain' | 'counter';
 
 export type SimEvent =
   | { type: 'capture'; x: number; y: number; by: number; from: number; kind?: CaptureKind; link?: number }
@@ -22,7 +22,9 @@ export type SimEvent =
   | { type: 'eliminated'; faction: number; by: number }
   /** A faction's territory reached its rally flag (the flag is then taken down). */
   | { type: 'flag'; faction: number }
-  | { type: 'defeat' };
+  | { type: 'defeat' }
+  /** Someone holds the winning share of the arena (you, or a rival: then you lose). */
+  | { type: 'won'; faction: number };
 
 const DT = 1 / TIME.ticksPerSecond;
 
@@ -38,16 +40,48 @@ export class World {
   /** Energy gained by the player per tick over the last few seconds (for the HUD rate). */
   private energyLog: number[] = [];
   private cellLog: number[] = [];
-  private nextSpawnCheck = 0;
-  private rivalsCreated = 0;
   ended = false;
+  /** The faction that won the match, once it is over (0 if you were wiped out first). */
+  winner = 0;
+  /** This match's league: arena size, number of rivals and their income. */
+  readonly info: League;
+  /** The faction rivals are ganging up on (0 if nobody leads clearly), and how hard (≥ 1). */
+  leader = 0;
+  leaderFocus = 1;
   /** Tests can switch the world tempo off to measure the base rules. */
   useTempo = true;
   /** Siege pocket checks, memoised per tick. */
   private pocketMemo = new Map<number, boolean>();
 
-  constructor(readonly seed: number) {
+  constructor(readonly seed: number, readonly league = 1) {
     this.rng = new Rng(seed ^ 0x9e3779b9);
+    this.info = leagueInfo(league);
+  }
+
+  /** Side of the square arena (cells run from 0 to size − 1 on both axes). */
+  get size(): number {
+    return this.info.size;
+  }
+
+  /** Rule tests switch the arena's edges off to study the rules on open ground. */
+  unbounded = false;
+
+  /** Lowest and one-past-highest coordinate inside the arena, on both axes. */
+  get lo(): number {
+    return this.unbounded ? -Infinity : 0;
+  }
+
+  get hi(): number {
+    return this.unbounded ? Infinity : this.info.size;
+  }
+
+  inBounds(x: number, y: number): boolean {
+    return x >= this.lo && y >= this.lo && x < this.hi && y < this.hi;
+  }
+
+  /** Cells needed to win: the winning share of the whole arena. */
+  get winCells(): number {
+    return this.unbounded ? Infinity : Math.ceil(MATCH.winShare * this.size * this.size);
   }
 
   get time(): number {
@@ -65,18 +99,41 @@ export class World {
     return this.factions.get(PLAYER)!;
   }
 
-  /** A new run: your cluster at the origin and the first two rivals. */
-  static create(seed: number): World {
-    const w = new World(seed);
+  /**
+   * A new match: you and every rival start at the same moment with the same energy, spread
+   * evenly around a ring, each rival with its own personality.
+   */
+  static create(seed: number, league = 1): World {
+    const w = new World(seed, league);
     const p = createFaction(PLAYER, 'You', COLORS.player, true);
     w.factions.set(PLAYER, p);
-    p.energy = START.playerEnergy;
-    w.placeCluster(p, 0, 0);
-    const a = w.rng.next() * Math.PI * 2;
-    w.spawnRival(a, RIVALS.firstDistance, 0, 0);
-    w.spawnRival(a + Math.PI * (0.6 + w.rng.next() * 0.8), RIVALS.secondDistance, 0, 0);
+    const n = w.info.rivals + 1;
+    const a0 = w.rng.next() * Math.PI * 2;
+    const c = (w.size - 1) / 2;
+    const r = w.size * MATCH.ring;
+    for (let i = 0; i < n; i++) {
+      const f = i === 0 ? p : w.createRival(i + 1, i - 1);
+      // A little jitter so starts aren't perfectly symmetric.
+      const a = a0 + (i / n) * Math.PI * 2 + (w.rng.next() - 0.5) * 0.25;
+      w.placeCluster(f, Math.round(c + Math.cos(a) * r), Math.round(c + Math.sin(a) * r));
+      f.energy = START.playerEnergy;
+    }
     w.events.length = 0;
     return w;
+  }
+
+  /** A rival with a random personality, its own twist on that personality's sliders and tastes. */
+  private createRival(id: number, n: number): Faction {
+    const profile = PROFILES[this.rng.int(PROFILES.length)];
+    const taste: Record<string, number> = {};
+    for (const u of UPGRADES) taste[u.id] = Math.exp((this.rng.next() - 0.5) * 1.6);
+    const f = createFaction(id, COLORS.rivalNames[n % COLORS.rivalNames.length], COLORS.rivals[n % COLORS.rivals.length], false, profile.id, taste);
+    // Personal twist on the profile's behaviour, so two Fortresses still play differently.
+    const twist = (v: number) => Math.max(-1, Math.min(1, v + (this.rng.next() - 0.5) * 0.6));
+    f.behavior = { focus: twist(profile.behavior.focus), shape: twist(profile.behavior.shape), reach: twist(profile.behavior.reach), posture: twist(profile.behavior.posture) };
+    refreshStats(f);
+    this.factions.set(id, f);
+    return f;
   }
 
   // ---------------------------------------------------------------- territory bookkeeping
@@ -149,7 +206,7 @@ export class World {
       const d = this.rng.int(4);
       const nx = keyX(k) + DX[d];
       const ny = keyY(k) + DY[d];
-      if (this.grid.owner(nx, ny) === NEUTRAL) this.transfer(nx, ny, f.id);
+      if (this.inBounds(nx, ny) && this.grid.owner(nx, ny) === NEUTRAL) this.transfer(nx, ny, f.id);
     }
   }
 
@@ -176,72 +233,6 @@ export class World {
 
   // ---------------------------------------------------------------- rivals
 
-  /** How far the player's territory reaches from its centre (cells). */
-  playerReach(): number {
-    const p = this.player;
-    const c = centroid(p);
-    return Math.max(4, Math.abs(p.minX - c.x), Math.abs(p.maxX - c.x), Math.abs(p.minY - c.y), Math.abs(p.maxY - c.y));
-  }
-
-  /** True if a square of radius r around (x, y) is neutral and no territory lies within `gap`. */
-  private siteIsClear(x: number, y: number, r: number, gap: number): boolean {
-    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (this.grid.owner(x + dx, y + dy) !== NEUTRAL) return false;
-    for (const f of this.factions.values()) {
-      if (!f.alive || f.cells === 0) continue;
-      // Quick reject by bounding box, then an exact check on frontier cells.
-      if (x < f.minX - gap || x > f.maxX + gap || y < f.minY - gap || y > f.maxY + gap) continue;
-      for (const k of f.frontier.values()) if (Math.abs(keyX(k) - x) <= gap && Math.abs(keyY(k) - y) <= gap) return false;
-    }
-    return true;
-  }
-
-  /**
-   * Spawn a rival at `angle` and a random distance in `dist` from (ox, oy). It receives about as
-   * much energy as you have earned so far and spends it on its own upgrade route at once.
-   */
-  spawnRival(angle: number, dist: readonly [number, number], ox: number, oy: number): Faction | null {
-    let site: { x: number; y: number } | null = null;
-    for (let tries = 0; tries < 24 && !site; tries++) {
-      const a = angle + (tries === 0 ? 0 : (this.rng.next() - 0.5) * Math.PI * 0.9);
-      const d = dist[0] + this.rng.next() * (dist[1] - dist[0]) + tries;
-      const x = Math.round(ox + Math.cos(a) * d);
-      const y = Math.round(oy + Math.sin(a) * d);
-      if (this.siteIsClear(x, y, RIVALS.clearRadius, RIVALS.minGapToTerritory)) site = { x, y };
-    }
-    if (!site) return null;
-    // Fresh ids keep old territory memories (Recovery) from being inherited; reuse only past 254.
-    let id = 2 + this.rivalsCreated;
-    if (id > 254) {
-      id = 2;
-      while (this.factions.get(id)?.alive) id++;
-      if (id > 254) return null;
-    }
-    const n = this.rivalsCreated++;
-    const profile = PROFILES[this.rng.int(PROFILES.length)];
-    const taste: Record<string, number> = {};
-    for (const u of UPGRADES) taste[u.id] = Math.exp((this.rng.next() - 0.5) * 1.6);
-    const color = COLORS.rivals[n % COLORS.rivals.length];
-    const name = COLORS.rivalNames[n % COLORS.rivalNames.length];
-    const f = createFaction(id, name, color, false, profile.id, taste);
-    // Personal twist on the profile's behaviour, so two Fortresses still play differently.
-    const twist = (v: number) => Math.max(-1, Math.min(1, v + (this.rng.next() - 0.5) * 0.6));
-    f.behavior = { focus: twist(profile.behavior.focus), shape: twist(profile.behavior.shape), reach: twist(profile.behavior.reach), posture: twist(profile.behavior.posture) };
-    refreshStats(f);
-    this.factions.set(id, f);
-    this.placeCluster(f, site.x, site.y);
-    const p = this.factions.get(PLAYER);
-    if (p) {
-      const j = RIVALS.budgetJitter;
-      // As if it had played since the start: the same starting energy plus what you have earned.
-      const earned = p.earned * (j[0] + this.rng.next() * (j[1] - j[0]));
-      f.energy = START.playerEnergy + earned;
-      f.earned = earned;
-      this.rivalShop(f);
-    }
-    this.events.push({ type: 'spawn', faction: id });
-    return f;
-  }
-
   /** Rival purchasing: best value by this rival's own tastes, saving up when needed. */
   rivalShop(f: Faction) {
     const profile = PROFILE_BY_ID[f.profile];
@@ -253,7 +244,7 @@ export class World {
         const level = f.levels[def.id] ?? 0;
         if (level >= def.maxLevel || !isUnlocked(def, f)) continue;
         const want = (profile?.weights[def.id] ?? 0.3) * (f.taste[def.id] ?? 1);
-        const cost = upgradeCost(def, level, f.stats.costMult);
+        const cost = upgradeCost(def, level);
         // Diminishing returns: each level a little less appealing than the last.
         const value = want / (cost * (1 + 0.08 * level));
         if (value > bestScore) {
@@ -267,37 +258,24 @@ export class World {
     }
   }
 
-  private maybeSpawnRivals() {
-    if (this.time < this.nextSpawnCheck) return;
-    this.nextSpawnCheck = this.time + RIVALS.checkSeconds;
-    const p = this.player;
-    if (!p.alive) return;
-    this.refreshBounds(p);
-    const reach = this.playerReach();
-    const c = centroid(p);
-    const near = RIVALS.dormantBeyond + reach;
-    let nearby = 0;
-    let alive = 0;
+  /**
+   * Who the rivals gang up on: the biggest faction, once it is clearly ahead of the runner-up.
+   * The further ahead, the harder they focus on it.
+   */
+  private updateLeader() {
+    let first: Faction | null = null;
+    let second = 0;
     for (const f of this.factions.values()) {
-      if (f.isPlayer || !f.alive) continue;
-      alive++;
-      const fc = centroid(f);
-      if (Math.hypot(fc.x - c.x, fc.y - c.y) < near) nearby++;
+      if (!f.alive) continue;
+      if (!first || f.cells > first.cells) {
+        if (first) second = Math.max(second, first.cells);
+        first = f;
+      } else second = Math.max(second, f.cells);
     }
-    const wanted = RIVALS.baseCount + Math.floor(reach / RIVALS.reachPerExtra);
-    if (nearby < wanted && alive < RIVALS.maxAlive) {
-      const dist = [reach + RIVALS.spawnBeyond[0], reach + RIVALS.spawnBeyond[1]] as const;
-      this.spawnRival(this.rng.next() * Math.PI * 2, dist, Math.round(c.x), Math.round(c.y));
-    }
-  }
-
-  /** Factions far from you pause, so an infinite world costs nothing where you aren't. */
-  isDormant(f: Faction): boolean {
-    if (f.isPlayer) return false;
-    const p = this.player;
-    const pc = centroid(p);
-    const fc = centroid(f);
-    return Math.hypot(fc.x - pc.x, fc.y - pc.y) > RIVALS.dormantBeyond + this.playerReach() + radius(f);
+    const lead = first ? first.cells / Math.max(1, second) : 0;
+    const t = Math.min(1, Math.max(0, (lead - LEADER.from) / (LEADER.full - LEADER.from)));
+    this.leader = first && t > 0 ? first.id : 0;
+    this.leaderFocus = 1 + (LEADER.maxFocus - 1) * t;
   }
 
   // ---------------------------------------------------------------- the tick
@@ -308,7 +286,7 @@ export class World {
     const p = this.player;
     const energyBefore = p.earned;
     const cellsBefore = p.cells;
-    const order = [...this.factions.values()].filter((f) => f.alive && f.cells > 0 && !this.isDormant(f));
+    const order = [...this.factions.values()].filter((f) => f.alive && f.cells > 0);
     // Shuffle so no faction always moves first.
     for (let i = order.length - 1; i > 0; i--) {
       const j = this.rng.int(i + 1);
@@ -316,13 +294,15 @@ export class World {
     }
     const tempo = this.tempo();
     this.pocketMemo.clear();
+    if (this.tick % 5 === 1) this.updateLeader();
     for (const f of order) {
       if (!f.alive) continue;
-      if (f.stats.tribute > 0) this.earn(f, (f.stats.tribute * f.cells / 100) * DT);
+      // Income from the ground you hold.
+      this.earn(f, (ENERGY.base + ENERGY.perCell * f.cells) * DT);
       f.budget += f.stats.rate * tempo * (1 + f.stats.sizeBonus * Math.sqrt(f.cells)) * DT;
       if (f.budget < 1) continue;
       const c = centroid(f);
-      const ctx: Context = { grid: this.grid, f, now, cx: c.x, cy: c.y, r: radius(f) };
+      const ctx: Context = { grid: this.grid, f, now, cx: c.x, cy: c.y, r: radius(f), lo: this.lo, hi: this.hi, leader: this.leader, leaderFocus: this.leaderFocus };
       while (f.budget >= 1 && f.alive) {
         f.budget -= 1;
         this.attempt(ctx);
@@ -330,7 +310,7 @@ export class World {
       if (!f.isPlayer) this.rivalShop(f);
     }
     if (this.tick % 10 === 0) for (const f of this.factions.values()) if (f.alive) this.refreshBounds(f);
-    this.maybeSpawnRivals();
+    this.checkWin();
     this.energyLog.push(p.earned - energyBefore);
     this.cellLog.push(p.cells - cellsBefore);
     const window = ENERGY.rateWindowSeconds * TIME.ticksPerSecond;
@@ -342,19 +322,18 @@ export class World {
 
   private attempt(ctx: Context) {
     const f = ctx.f;
-    if (f.stats.outpost > 0 && this.rng.next() < f.stats.outpost && this.launchOutpost(ctx)) return;
     const t = chooseTarget(ctx, this.rng, this.scratch);
     if (!t) return;
     if (t.owner === NEUTRAL) {
       if (this.rng.next() >= f.stats.neutralSuccess) return;
       this.transfer(t.x, t.y, f.id);
       f.claimed++;
-      this.earn(f, ENERGY.neutral * f.stats.yield);
+      this.earn(f, ENERGY.neutral);
       this.emit({ type: 'capture', x: t.x, y: t.y, by: f.id, from: NEUTRAL });
       return;
     }
     const def = this.factions.get(t.owner)!;
-    const p = conversionChance(this.grid, f.stats, f.id, def.stats, def.id, t.x, t.y, ctx.now, this.resistMult(f, def, t.x, t.y));
+    const p = conversionChance(this.grid, f.stats, f.id, def.stats, def.id, t.x, t.y, this.resistMult(f, def, t.x, t.y));
     this.grid.markHit(t.x, t.y, ctx.now);
     if (this.rng.next() >= p) {
       this.emit({ type: 'hit', x: t.x, y: t.y, by: f.id, owner: def.id });
@@ -390,7 +369,7 @@ export class World {
 
   /** Attempt to convert (x, y) held by `def` for `att` (used by counterattacks). */
   private conquer(att: Faction, def: Faction, x: number, y: number, now: number, kind: CaptureKind, link: number) {
-    const p = conversionChance(this.grid, att.stats, att.id, def.stats, def.id, x, y, now, this.resistMult(att, def, x, y));
+    const p = conversionChance(this.grid, att.stats, att.id, def.stats, def.id, x, y, this.resistMult(att, def, x, y));
     this.grid.markHit(x, y, now);
     if (this.rng.next() < p) this.convert(att, def, x, y, kind, link);
     else this.emit({ type: 'hit', x, y, by: att.id, owner: def.id });
@@ -400,23 +379,19 @@ export class World {
   private convert(att: Faction, def: Faction, x: number, y: number, kind: CaptureKind, link: number) {
     this.transfer(x, y, att.id);
     att.converted++;
-    this.earn(att, ENERGY.conquest * att.stats.conquest);
+    this.earn(att, ENERGY.conquest);
     this.emit({ type: 'capture', x, y, by: att.id, from: def.id, kind, link });
     if (def.cells === 0 && def.alive) this.eliminate(def, att.id);
   }
 
   /**
-   * Resistance multiplier for `def`'s cell at (x, y) under attack from `att`:
-   * Capital hardens ground near the defender's home; Siege weakens cut-off pockets.
+   * Resistance multiplier for `def`'s cell at (x, y) under attack from `att`: the bigger side has
+   * the edge (strength in numbers), and Siege weakens cut-off pockets.
    */
   resistMult(att: Faction, def: Faction, x: number, y: number): number {
-    let m = 1;
-    if (def.stats.capital > 0) {
-      const d = Math.hypot(x - def.homeX, y - def.homeY);
-      m *= 1 + def.stats.capital * Math.max(0, 1 - d / SPECIAL.capitalRadius);
-    }
-    if (att.stats.siege > 0 && this.isPocket(def, x, y)) m *= Math.max(0.2, 1 - att.stats.siege);
-    return m;
+    const edge = Math.min(COMBAT.sizeEdgeMax, Math.max(1 / COMBAT.sizeEdgeMax, (Math.max(1, def.cells) / Math.max(1, att.cells)) ** COMBAT.sizeEdge));
+    if (att.stats.siege > 0 && this.isPocket(def, x, y)) return edge * Math.max(0.2, 1 - att.stats.siege);
+    return edge;
   }
 
   /** True if (x, y) belongs to a small group cut off from most of its faction. */
@@ -431,54 +406,30 @@ export class World {
     return pocket;
   }
 
-  /**
-   * Outposts: plant a cell a few squares beyond the border, on open ground with nothing around
-   * it. Returns false (and the attempt proceeds normally) if no good site was found.
-   */
-  private launchOutpost(ctx: Context): boolean {
-    const f = ctx.f;
-    if (f.frontier.size === 0) return false;
-    for (let tries = 0; tries < 3; tries++) {
-      const k = f.frontier.pick(this.rng.next());
-      const sx = keyX(k);
-      const sy = keyY(k);
-      let ax = sx - ctx.cx;
-      let ay = sy - ctx.cy;
-      const len = Math.hypot(ax, ay);
-      if (len < 0.5) {
-        const a = this.rng.next() * Math.PI * 2;
-        ax = Math.cos(a);
-        ay = Math.sin(a);
-      } else {
-        ax /= len;
-        ay /= len;
-      }
-      const [d0, d1] = SPECIAL.outpostDistance;
-      const d = d0 + this.rng.next() * (d1 - d0);
-      const x = Math.round(sx + ax * d + (this.rng.next() - 0.5) * 2);
-      const y = Math.round(sy + ay * d + (this.rng.next() - 0.5) * 2);
-      let clear = true;
-      for (let dy = -1; dy <= 1 && clear; dy++) for (let dx = -1; dx <= 1 && clear; dx++) if (this.grid.owner(x + dx, y + dy) !== NEUTRAL) clear = false;
-      if (!clear) continue;
-      this.transfer(x, y, f.id);
-      f.claimed++;
-      this.earn(f, ENERGY.neutral * f.stats.yield);
-      this.emit({ type: 'capture', x, y, by: f.id, from: NEUTRAL, kind: 'outpost' });
-      return true;
-    }
-    return false;
+  /** Pay energy, after the faction's Income upgrade and (for rivals) the league's rival bonus. */
+  private earn(f: Faction, amount: number) {
+    const v = amount * f.stats.yield * (f.isPlayer ? 1 : this.info.rivalIncome);
+    f.energy += v;
+    f.earned += v;
   }
 
-  private earn(f: Faction, amount: number) {
-    f.energy += amount;
-    f.earned += amount;
+  /** The match ends when anyone holds the winning share, or when you are wiped out. */
+  private checkWin() {
+    if (this.ended) return;
+    for (const f of this.factions.values()) {
+      if (!f.alive || f.cells < this.winCells) continue;
+      this.ended = true;
+      this.winner = f.id;
+      this.emit({ type: 'won', faction: f.id });
+      return;
+    }
   }
 
   private eliminate(f: Faction, by: number) {
     f.alive = false;
     f.frontier.clear();
     this.emit({ type: 'eliminated', faction: f.id, by });
-    if (f.isPlayer) {
+    if (f.isPlayer && !this.ended) {
       this.ended = true;
       this.emit({ type: 'defeat' });
     }
@@ -516,16 +467,6 @@ export class World {
   }
 
   // ---------------------------------------------------------------- persistence support
-
-  /** Internal counters a save must carry to resume exactly. */
-  get counters() {
-    return { rivalsCreated: this.rivalsCreated, nextSpawnCheck: this.nextSpawnCheck };
-  }
-
-  set counters(c: { rivalsCreated: number; nextSpawnCheck: number }) {
-    this.rivalsCreated = c.rivalsCreated;
-    this.nextSpawnCheck = c.nextSpawnCheck;
-  }
 
   /** Rebuild every faction's cached territory facts from the grid (after loading). */
   rebuildCaches() {

@@ -347,3 +347,21 @@ input[type=range]:disabled { opacity: 0.4; cursor: not-allowed; }
 .b-ends { display: flex; justify-content: space-between; font-size: 0.72em; color: var(--ink-3); margin-top: -4px; }
 .b-hint { margin: 4px 0 0; font-size: 0.76em; color: var(--ink-2); min-height: 1.3em; }
 .rival-info .rival-style { color: var(--ink); }
+
+/* Standings: everyone's share of the arena, with a mark at the winning share. */
+#standings { grid-column: 1 / -1; position: relative; height: 6px; margin-top: 8px; border-radius: 3px; background: var(--line); overflow: visible; }
+#standings .bars { display: flex; height: 100%; border-radius: 3px; overflow: hidden; }
+#standings .bars span { height: 100%; transition: width 0.4s ease; }
+#standings .goal { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; background: var(--ink); left: 60%; }
+#stat-status.leading .stat-value { color: var(--warn); }
+#stat-status.victory .stat-value { color: var(--good); }
+
+/* League tab */
+.leagues { display: flex; flex-direction: column; }
+.league-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.league-row:last-child { border-bottom: 0; }
+.league-row h3 { margin: 0; font-size: 0.95em; font-weight: 650; display: flex; gap: 8px; align-items: baseline; }
+.league-row h3 .tag { font-size: 0.7em; font-weight: 600; color: var(--ink-2); background: var(--surface-2); padding: 1px 7px; border-radius: 999px; }
+.league-row p { margin: 0; font-size: 0.8em; color: var(--ink-2); }
+.league-row.locked h3, .league-row.locked p { color: var(--ink-3); }
+.league-row .btn { min-width: 96px; }

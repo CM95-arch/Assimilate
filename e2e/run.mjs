@@ -87,13 +87,15 @@ console.log('Assimilate e2e');
   await page.goto(APP_URL);
   await page.waitForTimeout(600);
 
-  await test('first launch: a 5–9 cell black cluster, two rivals, starting energy, intro tip', async () => {
+  await test('first launch: a League 1 match, 5–9 black cells, three rivals, starting energy, intro tip', async () => {
     const s = await G(page, () => {
       const w = window.__assimilate.game.world;
-      return { cells: w.player.cells, factions: w.factions.size, energy: w.player.energy };
+      return { cells: w.player.cells, factions: w.factions.size, energy: w.player.energy, league: w.league };
     });
+    assert(s.league === 1, `league ${s.league}`);
     assert(s.cells >= 5 && s.cells <= 12, `player starts with ${s.cells} cells`);
-    assert(s.factions === 3, `expected 2 rivals, got ${s.factions - 1}`);
+    assert(s.factions === 4, `expected 3 rivals, got ${s.factions - 1}`);
+    assert((await page.locator('#standings .bars span').count()) === 4, 'standings bar missing factions');
     assert(s.energy >= 8, 'not enough energy for a first upgrade');
     assert(await page.locator('#tip').isVisible(), 'intro tip not shown');
     assert(await page.locator('#tabs [data-tab="upgrades"] .dot').isVisible(), 'upgrades badge not shown with affordable upgrade');
@@ -105,7 +107,10 @@ console.log('Assimilate e2e');
     await page.waitForTimeout(9000);
     const b = await cells(page);
     assert(b - a >= 1 && b - a <= 7, `expected ~3 captures in 9s, got ${b - a}`);
-    assert(Number((await text(page, '#stat-territory [data-v]')).replace(/\D/g, '')) >= a, 'HUD territory not updating');
+    // The HUD refreshes a few times a second, so it may lag a capture behind.
+    const shown = Number((await text(page, '#stat-territory [data-r]')).split(' of')[0].replace(/\D/g, ''));
+    assert(shown >= b - 1 && shown > a - 1, `HUD territory not updating (${shown} vs ${b})`);
+    assert(/%$/.test(await text(page, '#stat-territory [data-v]')), 'HUD share not shown');
   });
 
   await test('intro tip dismisses and stays dismissed', async () => {
@@ -166,7 +171,6 @@ console.log('Assimilate e2e');
   });
 
   await test('unaffordable purchase is refused with a reason and costs nothing', async () => {
-    await page.locator('.chip[data-cat="combat"]').click();
     await setEnergy(page, 0);
     await page.waitForTimeout(300);
     assert((await page.locator('[data-buy="power"]').getAttribute('aria-disabled')) === 'true', 'button not marked disabled');
@@ -186,7 +190,6 @@ console.log('Assimilate e2e');
     assert((await G(page, () => window.__assimilate.game.world.player.levels.power)) === 10, '×10 did not buy 10');
     await setEnergy(page, 500);
     await page.locator('.seg button:has-text("Max")').click();
-    await page.locator('.chip[data-cat="defense"]').click();
     await page.locator('[data-buy="resistance"]').click();
     const lv = await G(page, () => window.__assimilate.game.world.player.levels.resistance);
     assert(lv > 1, `Max bought ${lv}`);
@@ -195,14 +198,10 @@ console.log('Assimilate e2e');
     await G(page, () => { window.__assimilate.game.paused = false; });
   });
 
-  await test('categories switch; locked upgrades say how to unlock them', async () => {
+  await test('one short list of upgrades; locked ones say how to unlock them', async () => {
     await G(page, () => { const p = window.__assimilate.game.world.player; p.earned = 0; });
-    for (const c of ['combat', 'defense', 'economy', 'expansion']) {
-      await page.locator(`.chip[data-cat="${c}"]`).click();
-      assert((await page.locator(`.chip[data-cat="${c}"]`).getAttribute('aria-pressed')) === 'true', `${c} chip not active`);
-      assert((await page.locator('[data-upgrade]').count()) > 0, `${c}: no cards`);
-    }
-    await page.locator('.chip[data-cat="defense"]').click();
+    await page.waitForTimeout(400);
+    assert((await page.locator('[data-upgrade]').count()) === 8, 'expected all 8 upgrades listed');
     assert(/Unlocks after earning/.test(await text(page, '#sheet-body')), 'no unlock hint');
     await G(page, () => { const p = window.__assimilate.game.world.player; p.earned = 1e6; });
     await page.waitForTimeout(400);
@@ -211,7 +210,7 @@ console.log('Assimilate e2e');
   });
 
   await test('every tab opens its panel and closes (same tab, ✕, Escape)', async () => {
-    for (const t of ['territory', 'upgrades', 'prestige', 'stats', 'settings']) {
+    for (const t of ['territory', 'upgrades', 'league', 'stats', 'settings']) {
       await page.locator(`#tabs [data-tab="${t}"]`).click();
       assert(await page.locator(`#sheet-body [data-panel="${t}"]`).count(), `${t}: wrong panel`);
       await shot(page, `03-panel-${t}`);
@@ -226,10 +225,12 @@ console.log('Assimilate e2e');
     assert(await page.locator('#sheet').isHidden(), 'Escape did not close');
   });
 
-  await test('prestige is an honest preview with no fake controls', async () => {
-    await page.locator('#tabs [data-tab="prestige"]').click();
-    assert(/later update/.test(await text(page, '#sheet-body')), 'no preview note');
-    assert((await page.locator('#sheet-body button').count()) === 0, 'has buttons');
+  await test('league tab: League 1 is being played, League 2 is locked until you win', async () => {
+    await page.locator('#tabs [data-tab="league"]').click();
+    assert(/60%/.test(await text(page, '#sheet-body')), 'no explanation of the goal');
+    assert(/Playing/.test(await text(page, '[data-league="1"]')), 'current league not marked');
+    assert(/Win League 1 to open/.test(await text(page, '[data-league="2"]')), 'next league not locked');
+    assert((await page.locator('[data-league="2"] button').count()) === 0, 'locked league is playable');
     await page.keyboard.press('Escape');
   });
 
@@ -252,7 +253,7 @@ console.log('Assimilate e2e');
 
   await test('territory panel lists rivals with their profile and build, live', async () => {
     await page.locator('#tabs [data-tab="territory"]').click();
-    assert((await page.locator('[data-rival]').count()) === 2, 'rivals not listed');
+    assert((await page.locator('[data-rival]').count()) === 3, 'rivals not listed');
     assert(/Rapid Expander|Fortress|Conqueror|Opportunist|Balanced/.test(await text(page, '.rivals')), 'no profile names');
     const a = await text(page, '#sheet-body');
     await ticks(page, 60);
@@ -346,7 +347,8 @@ console.log('Assimilate e2e');
     await shot(page, '04-contact');
   });
 
-  await test('scale milestones zoom out smoothly with a banner', async () => {
+  await test('scale milestones zoom out smoothly with a banner, up to the whole arena', async () => {
+    await G(page, () => window.__assimilate.game.newRun());
     const lv0 = await G(page, () => window.__assimilate.game.camera.level);
     await G(page, () => { const p = window.__assimilate.game.world.player; p.levels.rate = 30; p.stats.rate = 20; });
     for (let i = 0; i < 30 && (await G(page, () => window.__assimilate.game.camera.level)) === lv0; i++) {
@@ -357,6 +359,18 @@ console.log('Assimilate e2e');
     assert(st.level > lv0, 'no zoom-out');
     assert(st.zooming, 'zoom snapped instead of animating');
     assert(/Scale/.test(await text(page, '#banner')), 'no banner');
+    // Keep growing until the view shows the whole arena; it must stop there.
+    for (let i = 0; i < 60 && (await G(page, () => window.__assimilate.game.camera.level < window.__assimilate.game.arenaLevel())); i++) {
+      await ticks(page, 20);
+      await page.waitForTimeout(30);
+    }
+    await ticks(page, 100);
+    await page.waitForTimeout(100);
+    const cap = await G(page, () => ({ level: window.__assimilate.game.camera.level, max: window.__assimilate.game.arenaLevel(), ended: window.__assimilate.game.world.ended }));
+    assert(cap.level === cap.max, `view should stop at the whole arena (${cap.level} vs ${cap.max})`);
+    assert(!cap.ended, 'match ended during the test');
+    // Back to an ordinary match for the tests that follow.
+    await G(page, () => window.__assimilate.game.newRun());
   });
 
   await test('settings persist after reload; diagnostics overlay works', async () => {
@@ -392,7 +406,7 @@ console.log('Assimilate e2e');
     assert(after.audit.length === 0, after.audit.join('; '));
   });
 
-  await test('new run: cancel and backdrop keep the run; confirm starts fresh', async () => {
+  await test('restart: cancel and backdrop keep the match; confirm starts a fresh one', async () => {
     const seed = await G(page, () => window.__assimilate.game.world.seed);
     await page.locator('#tabs [data-tab="settings"]').click();
     await page.locator('[data-action="new-run"]').click();
@@ -408,21 +422,47 @@ console.log('Assimilate e2e');
     assert(r.runs >= 2, 'runs not counted');
   });
 
-  await test('defeat: the run ends with a summary that cannot be dismissed by accident; new run works', async () => {
+  await test('victory: holding 60% wins, opens the next league, and its match starts from the summary', async () => {
+    await G(page, () => {
+      const w = window.__assimilate.game.world;
+      let n = w.player.cells;
+      for (let y = 0; y < w.size && n < w.winCells; y++) for (let x = 0; x < w.size && n < w.winCells; x++) if (w.grid.owner(x, y) !== 1) { w.transfer(x, y, 1); n++; }
+    });
+    await ticks(page, 2);
+    await page.waitForTimeout(600);
+    assert(await page.locator('[data-id="match-end"]').isVisible(), 'no victory dialog');
+    assert(/Victory/.test(await text(page, '[data-id="match-end"]')), 'not a victory');
+    assert((await text(page, '#stat-status [data-v]')) === 'Victory', 'status not Victory');
+    assert((await G(page, () => window.__assimilate.game.progress.unlocked)) === 2, 'league 2 not opened');
+    await shot(page, '05a-victory');
+    await page.locator('[data-id="match-end"] [data-action="next"]').click();
+    const r = await G(page, () => ({ league: window.__assimilate.game.world.league, ended: window.__assimilate.game.world.ended, rivals: window.__assimilate.game.world.factions.size - 1 }));
+    assert(r.league === 2 && !r.ended && r.rivals === 3, `not a fresh League 2 match ${JSON.stringify(r)}`);
+    assert(/League 2/.test(await text(page, '#banner')), 'no league banner');
+    await page.locator('#tabs [data-tab="league"]').click();
+    assert(/Won/.test(await text(page, '[data-league="1"]')) && /Best win/.test(await text(page, '[data-league="1"]')), 'win not recorded');
+    await page.keyboard.press('Escape');
+  });
+
+  await test('defeat: the match ends with a summary that cannot be dismissed by accident; try again works', async () => {
     await G(page, () => {
       const a = window.__assimilate;
-      for (const f of a.game.world.factions.values()) if (!f.isPlayer) { f.behavior.focus = 1; a.grant(f.id, { power: 60, rate: 40 }); }
+      for (const f of a.game.world.factions.values()) if (!f.isPlayer) { f.behavior.focus = 1; a.grant(f.id, { power: 15, rate: 15 }); }
       a.game.world.player.stats.rate = 0;
       a.game.world.player.stats.resistance = 0.01;
     });
     for (let i = 0; i < 60 && !(await G(page, () => window.__assimilate.game.world.ended)); i++) await ticks(page, 100);
     await page.waitForTimeout(600);
-    assert(await page.locator('[data-id="defeat"]').isVisible(), 'no defeat dialog');
+    assert(await page.locator('[data-id="match-end"]').isVisible(), 'no defeat dialog');
+    assert(/took the arena|fallen/.test(await text(page, '[data-id="match-end"]')), 'not a defeat');
     await shot(page, '05-defeat');
     await page.mouse.click(5, 5);
-    assert(await page.locator('[data-id="defeat"]').isVisible(), 'defeat dialog dismissed by backdrop');
-    await page.locator('[data-id="defeat"] [data-action="new"]').click();
-    assert(!(await G(page, () => window.__assimilate.game.world.ended)), 'run still ended');
+    assert(await page.locator('[data-id="match-end"]').isVisible(), 'defeat dialog dismissed by backdrop');
+    const league = await G(page, () => window.__assimilate.game.world.league);
+    await page.locator('[data-id="match-end"] [data-action="again"]').click();
+    assert(!(await G(page, () => window.__assimilate.game.world.ended)), 'match still ended');
+    assert((await G(page, () => window.__assimilate.game.world.league)) === league, 'try again changed league');
+    assert((await G(page, () => window.__assimilate.game.progress.losses)) >= 1, 'loss not counted');
     assert((await page.locator('.modal').count()) === 0, 'dialog stayed');
   });
 
@@ -471,7 +511,7 @@ console.log('Assimilate e2e');
 // ---------- old and corrupted saves ----------
 for (const [name, value, expect] of [
   ['corrupted save', '{broken', /unreadable/i],
-  ['save from the old biology design', JSON.stringify({ version: 1, world: { seed: 1, cells: '' } }), /redesigned/i],
+  ['save from an earlier design', JSON.stringify({ version: 3, world: { seed: 1 }, settings: { introSeen: true } }), /now played in matches/i],
 ]) {
   const { ctx, page } = await newPage();
   await ctx.addInitScript((v) => {
@@ -517,65 +557,27 @@ for (const [name, value, expect] of [
   const { ctx, page } = await newPage();
   await page.goto(APP_URL);
   await page.waitForTimeout(300);
-  await test('large battles stay responsive (simulation + drawing budget)', async () => {
-    await dismissTip(page);
-    const r = await G(page, async () => {
-      const a = window.__assimilate;
-      // A fixed world, so the battle is the same every run.
-      a.game.newRun(3);
-      const w = a.game.world;
-      for (const f of w.factions.values()) a.grant(f.id, { rate: 60, resistance: 10 });
-      const t0 = performance.now();
-      let n = 0;
-      while (w.player.cells < 6000 && n < 14000 && !w.ended) { w.step(); n++; }
-      const simMs = (performance.now() - t0) / n;
-      await new Promise((res) => setTimeout(res, 3500));
-      const samples = [];
-      for (let i = 0; i < 30; i++) {
-        await new Promise((res) => requestAnimationFrame(res));
-        samples.push(a.renderer.info.drawMs);
-      }
-      samples.sort((x, y) => x - y);
-      let total = 0;
-      for (const f of w.factions.values()) total += f.cells;
-      return { you: w.player.cells, total, factions: w.factions.size, simMs, drawMs: samples[15], level: a.game.camera.level };
-    });
-    console.log(`      you ${r.you} cells, ${r.total} total in ${r.factions} factions, ${r.simMs.toFixed(2)} ms/tick, draw ${r.drawMs.toFixed(1)} ms, scale ${r.level + 1}`);
-    assert(r.total > 15000, 'battle did not grow large');
-    assert(r.simMs < 8, `ticks too slow: ${r.simMs} ms`);
-    assert(r.drawMs < 14, `drawing too slow: ${r.drawMs} ms`);
-    await shot(page, '08-large-battle');
-  });
-  await ctx.close();
-}
-
-// ---------- late game on a phone (regression: lag and heat around scale 10) ----------
-{
-  const { ctx, page } = await newPage();
-  await page.goto(APP_URL);
-  await page.waitForTimeout(300);
-  await test('scale 10 battle on a phone: 60 fps, cheap frames, and unchanged frames are skipped', async () => {
+  await test('the biggest arena (League 10) mid-battle on a phone: 60 fps, cheap frames, unchanged frames skipped', async () => {
     await dismissTip(page);
     const setup = await G(page, () => {
       const a = window.__assimilate;
-      a.game.newRun(3);
+      a.game.progress.unlocked = 10;
+      // A fixed world, so the battle is the same every run.
+      a.game.newRun(3, 10);
       const w = a.game.world;
-      for (const f of w.factions.values()) a.grant(f.id, { rate: 60, resistance: 20, power: 20 });
-      // A player strong enough to survive, so the map keeps changing during the measurement.
-      a.grant(1, { resistance: 90, power: 80, reinforcement: 30, entrenchment: 10, capital: 10, counter: 8 });
+      const t0 = performance.now();
       let n = 0;
-      while (a.game.camera.level < 9 && n < 30000 && !w.ended) {
-        w.step();
-        n++;
-        if (n % 50 === 0) a.game.update(0.016, performance.now());
-      }
+      // Play until the land is gone and every border is a front.
+      while (w.time < 9 * 60 && !w.ended) { w.step(); n++; }
       w.events.length = 0;
+      // Nine minutes passed in an instant: put the camera where it would have glided to.
+      a.game.camera.snap(a.game.arenaLevel(), w.size / 2, w.size / 2);
       let total = 0;
       for (const f of w.factions.values()) total += f.cells;
-      return { level: a.game.camera.level, total, ended: w.ended };
+      return { simMs: (performance.now() - t0) / n, total, size: w.size, ended: w.ended };
     });
-    assert(setup.level >= 8 && !setup.ended, `setup failed ${JSON.stringify(setup)}`);
-    await page.waitForTimeout(3500);
+    assert(!setup.ended, 'match ended during setup');
+    await page.waitForTimeout(3000);
     const r = await G(page, async () => {
       const a = window.__assimilate;
       const t = [];
@@ -593,14 +595,24 @@ for (const [name, value, expect] of [
       const redraws = (a.renderer.frames - f0) / ((performance.now() - s0) / 1000);
       t.sort((x, y) => x - y);
       d.sort((x, y) => x - y);
-      return { frame: t[45], slow: t[81], draw: d[45], redraws };
+      // Paused: nothing changes, so nothing should be redrawn.
+      a.game.paused = true;
+      // Let the last capture animations finish first.
+      await new Promise((res) => setTimeout(res, 800));
+      const p0 = a.renderer.frames;
+      await new Promise((res) => setTimeout(res, 1000));
+      const idle = a.renderer.frames - p0;
+      a.game.paused = false;
+      return { frame: t[45], slow: t[81], draw: d[45], redraws, idle };
     });
-    console.log(`      ${setup.total} cells on the map; frame ${r.frame.toFixed(1)} ms (90th pct ${r.slow.toFixed(1)}), draw ${r.draw.toFixed(1)} ms, ${r.redraws.toFixed(0)} redraws/s`);
+    console.log(`      ${setup.total} of ${setup.size * setup.size} cells held, ${setup.simMs.toFixed(2)} ms/tick; frame ${r.frame.toFixed(1)} ms (90th pct ${r.slow.toFixed(1)}), draw ${r.draw.toFixed(1)} ms, ${r.redraws.toFixed(0)} redraws/s (${r.idle} while paused)`);
+    assert(setup.total > setup.size * setup.size * 0.8, 'arena not filled');
+    assert(setup.simMs < 4, `ticks too slow: ${setup.simMs} ms`);
     assert(r.slow < 34, `frequent hitches: 90th percentile ${r.slow} ms`);
     assert(r.frame < 22, `slow frames: ${r.frame} ms`);
     assert(r.draw < 5, `expensive draws: ${r.draw} ms`);
-    assert(r.redraws < 30, `redrawing unchanged frames (${r.redraws}/s)`);
-    await shot(page, '09-scale-10');
+    assert(r.idle <= 2, `redrawing unchanged frames while paused (${r.idle}/s)`);
+    await shot(page, '08-league-10');
   });
   await ctx.close();
 }

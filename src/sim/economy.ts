@@ -5,8 +5,8 @@ import { refreshStats, type Faction } from './faction';
 
 export type BuyAmount = 1 | 10 | 'max';
 
-export function upgradeCost(def: UpgradeDef, level: number, costMult: number): number {
-  return Math.ceil(def.baseCost * def.costGrowth ** level * costMult);
+export function upgradeCost(def: UpgradeDef, level: number): number {
+  return Math.ceil(def.baseCost * def.costGrowth ** level);
 }
 
 export function isUnlocked(def: UpgradeDef, f: Faction): boolean {
@@ -24,13 +24,12 @@ export function quote(f: Faction, id: string, amount: BuyAmount): Quote {
   const def = UPGRADE_BY_ID[id];
   const level = f.levels[id] ?? 0;
   const room = def.maxLevel - level;
-  const mult = f.stats.costMult;
-  const nextCost = room > 0 ? upgradeCost(def, level, mult) : Infinity;
+  const nextCost = room > 0 ? upgradeCost(def, level) : Infinity;
   const want = amount === 'max' ? room : Math.min(amount, room);
   let cost = 0;
   let count = 0;
   for (let i = 0; i < want; i++) {
-    const c = upgradeCost(def, level + i, mult);
+    const c = upgradeCost(def, level + i);
     if (amount === 'max' && cost + c > f.energy) break;
     cost += c;
     count++;
@@ -48,7 +47,7 @@ export interface BuyResult {
 export function buy(f: Faction, id: string, amount: BuyAmount = 1): BuyResult {
   const def = UPGRADE_BY_ID[id];
   if (!def) return { ok: false, bought: 0, reason: 'Unknown upgrade' };
-  if (!f.alive) return { ok: false, bought: 0, reason: 'This run has ended' };
+  if (!f.alive) return { ok: false, bought: 0, reason: 'This match has ended' };
   if (!isUnlocked(def, f)) return { ok: false, bought: 0, reason: 'Not unlocked yet' };
   const q = quote(f, id, amount);
   if (q.count === 0) return { ok: false, bought: 0, reason: 'Already at max level' };
@@ -61,5 +60,5 @@ export function buy(f: Faction, id: string, amount: BuyAmount = 1): BuyResult {
 
 /** Anything the faction could buy right now (for the Upgrades tab badge). */
 export function anyAffordable(f: Faction): boolean {
-  return UPGRADES.some((d) => isUnlocked(d, f) && (f.levels[d.id] ?? 0) < d.maxLevel && upgradeCost(d, f.levels[d.id] ?? 0, f.stats.costMult) <= f.energy);
+  return UPGRADES.some((d) => isUnlocked(d, f) && (f.levels[d.id] ?? 0) < d.maxLevel && upgradeCost(d, f.levels[d.id] ?? 0) <= f.energy);
 }

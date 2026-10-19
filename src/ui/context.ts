@@ -8,7 +8,8 @@ export interface UiContext {
   save: () => boolean;
   lastSavedAt: () => number;
   applySettings: () => void;
-  confirmNewRun: () => void;
+  /** Ask before abandoning the current match for a new one (in `league`, default the current). */
+  confirmNewRun: (league?: number) => void;
   confirmReset: () => void;
   /** Re-render the open panel (after structural changes). */
   rerender: () => void;

@@ -29,14 +29,14 @@ function boot() {
   const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   const loaded = load(store);
   const snap = loaded.snapshot;
-  const game = new Game(snap?.world ?? null, snap?.scale ?? 0, snap?.settings ?? createSettings(prefersReduced), snap?.stats);
+  const game = new Game(snap?.world ?? null, snap?.scale ?? 0, snap?.settings ?? loaded.kept?.settings ?? createSettings(prefersReduced), snap?.stats ?? loaded.kept?.stats, snap?.progress);
 
   let lastSaved = 0;
   // Set while wiping progress, so the unload handler can't write the old game back.
   let resetting = false;
   const doSave = () => {
     if (resetting) return false;
-    const ok = save(store, { world: game.world, scale: game.camera.level, settings: game.settings, stats: game.stats }, Date.now());
+    const ok = save(store, { world: game.world, scale: game.camera.level, settings: game.settings, stats: game.stats, progress: game.progress }, Date.now());
     if (ok) lastSaved = Date.now();
     return ok;
   };
@@ -53,8 +53,8 @@ function boot() {
     save: doSave,
     lastSavedAt: () => lastSaved,
     applySettings,
-    newRun: () => {
-      game.newRun();
+    newRun: (league?: number) => {
+      game.newRun(undefined, league);
       doSave();
     },
     reset: () => {
@@ -70,8 +70,8 @@ function boot() {
 
   if (loaded.source === 'backup') app.toasts.show('Recovered progress from backup save', 'good');
   else if (loaded.corrupt) app.toasts.show('Save was unreadable — started fresh', 'bad');
-  else if (loaded.outdated) app.toasts.show('Assimilate was redesigned — your old game couldn\u2019t carry over');
-  if (game.world.ended) app.onDefeat();
+  else if (loaded.outdated) app.toasts.show('Assimilate is now played in matches — your old world couldn\u2019t carry over');
+  if (game.world.ended) app.showMatchEnd();
   app.showIntro();
   doSave();
 

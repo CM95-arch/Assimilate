@@ -3,7 +3,7 @@ import { SAVE } from '../src/config/balance';
 import { buy } from '../src/sim/economy';
 import { load, parse, save, serialize, type StorageLike } from '../src/persist/save';
 import { World } from '../src/sim/world';
-import { createSettings, createStats } from '../src/state';
+import { createProgress, createSettings, createStats } from '../src/state';
 import { fmt, fmtDuration, fmtPct } from '../src/util/format';
 
 function memStore(): StorageLike & { data: Map<string, string> } {
@@ -11,14 +11,14 @@ function memStore(): StorageLike & { data: Map<string, string> } {
   return { data, getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v), removeItem: (k) => void data.delete(k) };
 }
 
-function played(seed = 8, ticks = 1200) {
-  const w = World.create(seed);
+function played(seed = 8, ticks = 1200, league = 3) {
+  const w = World.create(seed, league);
   buy(w.player, 'rate');
   for (let t = 0; t < ticks; t++) w.step();
   return w;
 }
 
-const snap = (world: World, extra: Partial<{ scale: number }> = {}) => ({ world, scale: extra.scale ?? 0, settings: createSettings(), stats: createStats() });
+const snap = (world: World, extra: Partial<{ scale: number }> = {}) => ({ world, scale: extra.scale ?? 0, settings: createSettings(), stats: createStats(), progress: createProgress() });
 
 describe('saves', () => {
   it('round-trips territory, factions, upgrades and energy exactly', () => {
@@ -28,6 +28,8 @@ describe('saves', () => {
     expect(back.player.flag).toEqual({ x: 30, y: -12 });
     expect(back.audit()).toEqual([]);
     expect(back.tick).toBe(w.tick);
+    expect(back.league).toBe(w.league);
+    expect(back.size).toBe(w.size);
     expect(back.factions.size).toBe(w.factions.size);
     for (const f of w.factions.values()) {
       const g = back.factions.get(f.id)!;
@@ -53,10 +55,12 @@ describe('saves', () => {
     expect(b.player.cells).toBeLessThan(a.player.cells * 1.15);
   });
 
-  it('keeps settings and stats', () => {
+  it('keeps settings, stats and league progress', () => {
     const settings = { ...createSettings(), speed: 4 as const, sound: false, introSeen: true };
     const stats = { ...createStats(), cellsConverted: 1234, runsStarted: 3 };
-    const s = parse(serialize({ world: played(1, 10), scale: 1, settings, stats }, 0));
+    const progress = { unlocked: 3, best: { 1: 700, 2: 950 }, wins: 2, losses: 5 };
+    const s = parse(serialize({ world: played(1, 10), scale: 1, settings, stats, progress }, 0));
+    expect(s.progress).toEqual(progress);
     expect(s.settings.speed).toBe(4);
     expect(s.settings.sound).toBe(false);
     expect(s.stats.cellsConverted).toBe(1234);
@@ -76,13 +80,16 @@ describe('saves', () => {
     expect(r.snapshot?.world.player.cells).toBe(w.player.cells);
   });
 
-  it('sets aside saves from the old biology design without calling them corrupt', () => {
+  it('sets aside saves from earlier designs without calling them corrupt, keeping settings and stats', () => {
     const store = memStore();
-    store.data.set(SAVE.key, JSON.stringify({ version: 1, world: { seed: 1, cells: '' } }));
+    store.data.set(SAVE.key, JSON.stringify({ version: 3, world: { seed: 1 }, settings: { ...createSettings(), introSeen: true, volume: 0.2 }, stats: { ...createStats(), cellsClaimed: 777 } }));
     const r = load(store);
     expect(r.snapshot).toBeNull();
     expect(r.outdated).toBe(true);
     expect(r.corrupt).toBe(false);
+    expect(r.kept?.settings.introSeen).toBe(true);
+    expect(r.kept?.settings.volume).toBe(0.2);
+    expect(r.kept?.stats.cellsClaimed).toBe(777);
   });
 
   it('starts fresh when every save is garbage or from the future', () => {
@@ -108,7 +115,7 @@ describe('saves', () => {
     const base = JSON.parse(serialize(snap(played(1, 20)), 0));
     base.world.factions[0].levels = { rate: 99999, nonsense: 5 };
     const w = parse(JSON.stringify(base)).world;
-    expect(w.player.levels).toEqual({ rate: 60 });
+    expect(w.player.levels).toEqual({ rate: 15 });
   });
 
   it('reports storage failures instead of throwing', () => {

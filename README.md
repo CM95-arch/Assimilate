@@ -1,19 +1,15 @@
 # Assimilate
 
-An idle territory-conquest game for phones. You are the black territory on an endless white grid.
-Your territory expands on its own, and so do coloured rival factions. You don't move anything by
-hand. Behaviour sliders decide what your territory goes after, and energy buys upgrades that make
-it stronger. Every rival plays by the same rules with its own settings and build, so each border
-becomes a different fight.
+A territory-conquest game for phones, played in matches. You are the black territory in a white
+square arena with a few coloured rivals. Everyone's territory expands on its own; you don't move
+anything by hand. Behaviour sliders and a rally flag decide where your territory goes, and energy
+(earned by holding ground) buys upgrades. The first to hold 60% of the arena wins, but rivals gang
+up on whoever is clearly ahead. Winning a league opens the next, with more and richer rivals.
 
-**Current build: 0.3.1.** Infinite blank grid, a rally flag you plant with a tap to steer your
-growth, expansion that starts at about one cell every 3
-seconds and speeds up gently over 12 minutes, energy, four behaviour sliders, 16 upgrades in
-four categories (including Outposts, Chain Reaction, Siege, Counterattack, Tribute and
-Capital), rivals
-with five personalities that appear as you expand, border combat, a camera you can drag and zoom,
-saving, statistics and settings. Prestige, offline progress and the rest of the upgrade list come
-next (see `docs/PHASE_REPORT.md`).
+**Current build: 0.4.0.** Matches in a square arena, 10 leagues, 8 upgrades that reset each match
+and can't all be afforded, four behaviour sliders, a rally flag, strength in numbers, rivals with
+five personalities that gang up on the leader, a standings bar, an end-of-match summary, saving,
+statistics and settings. See `docs/DESIGN_DECISIONS.md` for why it works this way.
 
 ## Play it on your phone
 
@@ -52,14 +48,16 @@ Add `?debug` to the URL to expose `window.__assimilate` in the browser console, 
 
 All gameplay numbers live in `src/config/`:
 
-- `balance.ts`: base faction stats, combat, energy, rival spawning, camera, animation and colours.
+- `balance.ts`: base faction stats, combat, energy, matches and leagues, ganging up on the
+  leader, camera, animation and colours.
 - `upgrades.ts`: every upgrade's cost, unlock point and what it changes, plus how the
   behaviour sliders map onto priorities.
 - `profiles.ts`: rival personalities (slider positions and how much each type values each
   upgrade).
 
-After changing numbers, run `npm run sim` (try `SEED=3 MINUTES=10`, or `BUILD=power,resistance`)
-and then `npm test`.
+After changing numbers, run `npm run sim` to play a match headlessly, or `MATCHES=12 npm run sim`
+for a win rate and match lengths across many seeds (add `LEAGUE=5`, `POLICY=none` or
+`BUILD=power,resistance`). Then run `npm test`.
 
 ## Project layout
 
@@ -67,10 +65,10 @@ and then `npm test`.
 src/
   config/      tunable numbers: balance, upgrades, rival profiles
   sim/         pure simulation shared by the game, tests and scripts (no rendering)
-    grid.ts       infinite chunked grid + key sets
+    grid.ts       chunked grid + key sets
     faction.ts    a faction: levels → stats, energy, territory caches
     expansion.ts  the rules: target scoring and conversion chance (where emergence comes from)
-    world.ts      tick loop, captures, elimination, rival spawning, rival shopping, dormancy
+    world.ts      a match: arena, starts, tick loop, income, captures, leader, win check, rival shopping
     economy.ts    prices, unlocks, purchases (shared by you and rivals)
     rng.ts        seeded random numbers
   render/      camera (follow, milestones, pan/zoom), batched drawing, capture animations

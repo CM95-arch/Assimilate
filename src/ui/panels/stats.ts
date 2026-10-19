@@ -3,12 +3,12 @@ import type { Panel, UiContext } from '../context';
 import { h, setText } from '../dom';
 
 function sections(ctx: UiContext): [string, [string, string, string][]][] {
-  const { world, stats, camera } = ctx.game;
+  const { world, stats, progress } = ctx.game;
   const p = world.player;
   const rivals = [...world.factions.values()].filter((f) => !f.isPlayer);
   return [
     [
-      'This run',
+      `This match · League ${world.league}`,
       [
         ['cells', 'Territory', `${fmt(p.cells)} cells`],
         ['peak', 'Largest territory', `${fmt(p.peakCells)} cells`],
@@ -16,22 +16,21 @@ function sections(ctx: UiContext): [string, [string, string, string][]][] {
         ['converted', 'Enemy cells converted', fmt(p.converted)],
         ['lost', 'Cells lost', fmt(p.lost)],
         ['earned', 'Energy earned', fmt(p.earned)],
-        ['rivals', 'Rivals met · eliminated', `${rivals.length} · ${rivals.filter((f) => !f.alive).length}`],
-        ['scale', 'Scale', String(camera.level + 1)],
-        ['age', 'Run time', fmtDuration(world.time)],
+        ['rivals', 'Rivals · eliminated', `${rivals.length} · ${rivals.filter((f) => !f.alive).length}`],
+        ['age', 'Match time', fmtDuration(world.time)],
       ],
     ],
     [
       'Lifetime',
       [
-        ['best', 'Largest territory ever', `${fmt(stats.bestTerritory)} cells`],
+        ['record', 'Matches won · lost', `${fmt(progress.wins)} · ${fmt(progress.losses)}`],
+        ['league', 'Highest league open', String(progress.unlocked)],
         ['l-claimed', 'Open cells claimed', fmt(stats.cellsClaimed)],
         ['l-converted', 'Enemy cells converted', fmt(stats.cellsConverted)],
         ['l-lost', 'Cells lost', fmt(stats.cellsLost)],
         ['l-elim', 'Rivals you eliminated', fmt(stats.rivalsEliminated)],
         ['l-energy', 'Energy earned', fmt(stats.energyEarned)],
-        ['l-scale', 'Highest scale', String(stats.highestScale)],
-        ['runs', 'Runs started', fmt(stats.runsStarted)],
+        ['runs', 'Matches started', fmt(stats.runsStarted)],
         ['play', 'Playtime', fmtDuration(stats.playSeconds)],
       ],
     ],

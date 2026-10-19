@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BASE_STATS, START, TIME } from '../src/config/balance';
+import { BASE_STATS, COMBAT, ENERGY, LEADER, leagueInfo, MATCH, START, TIME } from '../src/config/balance';
 import { UPGRADES, deriveStats, neutralBehavior, type Behavior } from '../src/config/upgrades';
 import { buy, isUnlocked, quote, upgradeCost } from '../src/sim/economy';
-import { chooseTarget, conversionChance, type Candidate } from '../src/sim/expansion';
+import { chooseTarget, conversionChance, score, type Candidate } from '../src/sim/expansion';
 import { createFaction, type Faction } from '../src/sim/faction';
 import { cellKey, Grid, keyX, keyY, NEUTRAL } from '../src/sim/grid';
 import { Rng } from '../src/sim/rng';
@@ -17,8 +17,8 @@ const run = (w: World, seconds: number) => {
 function lab(seed = 1): World {
   const w = new World(seed);
   w.useTempo = false;
+  w.unbounded = true;
   w.factions.set(PLAYER, createFaction(PLAYER, 'You', '#000', true));
-  w.counters = { rivalsCreated: 0, nextSpawnCheck: 1e12 };
   return w;
 }
 
@@ -57,7 +57,7 @@ describe('starting clusters', () => {
     for (let seed = 1; seed <= 10; seed++) {
       const w = World.create(seed);
       expect(w.audit()).toEqual([]);
-      expect(w.factions.size).toBe(3);
+      expect(w.factions.size).toBe(leagueInfo(1).rivals + 1);
       for (const f of w.factions.values()) {
         expect(f.cells).toBeGreaterThanOrEqual(START.minCells);
         expect(f.cells).toBeLessThanOrEqual(START.maxCells);
@@ -132,30 +132,28 @@ describe('combat', () => {
     const grid = g();
     grid.set(0, 0, 2, 0);
     grid.set(-1, 0, 1, 0);
-    const base = conversionChance(grid, BASE_STATS, 1, BASE_STATS, 2, 0, 0, 0);
+    const base = conversionChance(grid, BASE_STATS, 1, BASE_STATS, 2, 0, 0);
     grid.set(0, -1, 1, 0);
     grid.set(0, 1, 1, 0);
-    const surrounded = conversionChance(grid, BASE_STATS, 1, BASE_STATS, 2, 0, 0, 0);
+    const surrounded = conversionChance(grid, BASE_STATS, 1, BASE_STATS, 2, 0, 0);
     expect(surrounded).toBeGreaterThan(base);
     const grid2 = g();
     grid2.set(0, 0, 2, 0);
     grid2.set(-1, 0, 1, 0);
     grid2.set(1, 0, 2, 0);
     grid2.set(0, 1, 2, 0);
-    expect(conversionChance(grid2, BASE_STATS, 1, BASE_STATS, 2, 0, 0, 0)).toBeLessThan(base);
+    expect(conversionChance(grid2, BASE_STATS, 1, BASE_STATS, 2, 0, 0)).toBeLessThan(base);
   });
 
-  it('power, resistance and entrenchment all matter', () => {
+  it('power and resistance both matter', () => {
     const grid = g();
     grid.set(0, 0, 2, 0);
     grid.set(-1, 0, 1, 0);
     const strong = deriveStats({ power: 10 });
     const tough = deriveStats({ resistance: 10 });
-    const dug = deriveStats({ entrenchment: 10 });
-    const base = conversionChance(grid, BASE_STATS, 1, BASE_STATS, 2, 0, 0, 0);
-    expect(conversionChance(grid, strong, 1, BASE_STATS, 2, 0, 0, 0)).toBeGreaterThan(base);
-    expect(conversionChance(grid, BASE_STATS, 1, tough, 2, 0, 0, 0)).toBeLessThan(base);
-    expect(conversionChance(grid, BASE_STATS, 1, dug, 2, 0, 0, 100)).toBeLessThan(conversionChance(grid, BASE_STATS, 1, dug, 2, 0, 0, 0));
+    const base = conversionChance(grid, BASE_STATS, 1, BASE_STATS, 2, 0, 0);
+    expect(conversionChance(grid, strong, 1, BASE_STATS, 2, 0, 0)).toBeGreaterThan(base);
+    expect(conversionChance(grid, BASE_STATS, 1, tough, 2, 0, 0)).toBeLessThan(base);
   });
 
   it('caches stay exact through long multi-faction battles', () => {
@@ -173,7 +171,7 @@ describe('combat', () => {
     w.factions.set(2, weak);
     w.transfer(0, 0, PLAYER);
     w.transfer(1, 0, 2);
-    grantLevels(p, { power: 60 });
+    grantLevels(p, { power: 15 });
     setBehavior(p, { focus: 1 });
     weak.stats.rate = 0;
     run(w, 20);
@@ -181,13 +179,13 @@ describe('combat', () => {
     expect(w.events.some((e) => e.type === 'eliminated' && e.faction === 2)).toBe(true);
   });
 
-  it('the player being wiped out ends the run', () => {
+  it('the player being wiped out ends the match', () => {
     const w = lab();
     const strong = createFaction(2, 'Strong', '#f00', false, 'conqueror');
     w.factions.set(2, strong);
     w.transfer(0, 0, PLAYER);
     w.transfer(1, 0, 2);
-    grantLevels(strong, { power: 60 });
+    grantLevels(strong, { power: 15 });
     setBehavior(strong, { focus: 1 });
     w.player.stats.rate = 0;
     run(w, 60);
@@ -253,7 +251,7 @@ describe('emergent behaviour from the behaviour sliders', () => {
       const n = 3000;
       const out: Candidate[] = [];
       for (let i = 0; i < n; i++) {
-        const t = chooseTarget({ grid: w.grid, f: w.player, now: 0, cx: -3, cy: 0, r: 7 }, rng, out);
+        const t = chooseTarget({ grid: w.grid, f: w.player, now: 0, cx: -3, cy: 0, r: 7, lo: -Infinity, hi: Infinity, leader: 0, leaderFocus: 1 }, rng, out);
         if (t && t.owner === 2) enemy++;
       }
       return enemy / n;
@@ -277,7 +275,7 @@ describe('emergent behaviour from the behaviour sliders', () => {
       let enemy = 0;
       const out: Candidate[] = [];
       for (let i = 0; i < 4000; i++) {
-        const t = chooseTarget({ grid: w.grid, f: w.player, now: 0, cx: 0, cy: -2, r: 4 }, rng, out);
+        const t = chooseTarget({ grid: w.grid, f: w.player, now: 0, cx: 0, cy: -2, r: 4, lo: -Infinity, hi: Infinity, leader: 0, leaderFocus: 1 }, rng, out);
         if (!t || t.owner !== 2) continue;
         enemy++;
         if (t.x === 0 && t.y === -1) tip++;
@@ -299,7 +297,7 @@ describe('emergent behaviour from the behaviour sliders', () => {
       let left = 0;
       const out: Candidate[] = [];
       for (let i = 0; i < 4000; i++) {
-        const t = chooseTarget({ grid: w.grid, f: w.player, now: 1, cx: 0, cy: 0, r: 4 }, rng, out);
+        const t = chooseTarget({ grid: w.grid, f: w.player, now: 1, cx: 0, cy: 0, r: 4, lo: -Infinity, hi: Infinity, leader: 0, leaderFocus: 1 }, rng, out);
         if (t && t.x <= -4) left++;
       }
       return left / 4000;
@@ -314,9 +312,7 @@ describe('emergent behaviour from the behaviour sliders', () => {
       const changed = (Object.keys(base) as (keyof typeof base)[]).filter((k) => up[k] !== base[k]);
       expect(changed.length, `${def.id} changes nothing`).toBeGreaterThan(0);
       for (const k of changed) {
-        // Lower is better only for prices; everything else must go up.
-        if (k === 'costMult') expect(up[k]).toBeLessThan(base[k]);
-        else expect(up[k], `${def.id} lowers ${k}`).toBeGreaterThan(base[k]);
+        expect(up[k], `${def.id} lowers ${k}`).toBeGreaterThan(base[k]);
       }
       for (const k of ['aggression', 'consolidation', 'momentum', 'flanking', 'threat', 'recovery'] as const) {
         expect(up[k], `${def.id} touches behaviour stat ${k}`).toBe(base[k]);
@@ -331,11 +327,11 @@ describe('economy', () => {
     const p = w.player;
     const starters = UPGRADES.filter((d) => isUnlocked(d, p));
     expect(starters.map((d) => d.id).sort()).toEqual(['power', 'rate', 'resistance', 'yield']);
-    expect(starters.some((d) => upgradeCost(d, 0, 1) <= p.energy)).toBe(true);
+    expect(starters.some((d) => upgradeCost(d, 0) <= p.energy)).toBe(true);
     let bought = 0;
     for (let t = 0; t < 60 * TIME.ticksPerSecond; t++) {
       w.step();
-      const cheapest = starters.slice().sort((a, b) => upgradeCost(a, p.levels[a.id] ?? 0, 1) - upgradeCost(b, p.levels[b.id] ?? 0, 1))[0];
+      const cheapest = starters.slice().sort((a, b) => upgradeCost(a, p.levels[a.id] ?? 0) - upgradeCost(b, p.levels[b.id] ?? 0))[0];
       if (buy(p, cheapest.id).ok) bought++;
     }
     expect(bought).toBeGreaterThanOrEqual(4);
@@ -343,8 +339,8 @@ describe('economy', () => {
 
   it('prices escalate, ×10 quotes ten levels, Max buys what is affordable', () => {
     const f = createFaction(1, 'You', '#000', true);
-    f.energy = 1e6;
-    f.earned = 1e6;
+    f.energy = 1e9;
+    f.earned = 1e9;
     const q1 = quote(f, 'rate', 1);
     const q10 = quote(f, 'rate', 10);
     expect(q10.count).toBe(10);
@@ -356,70 +352,133 @@ describe('economy', () => {
     expect(f.energy).toBeCloseTo(1, 6);
   });
 
+  it('a match can’t afford everything: maxing every upgrade costs far more than a match earns', () => {
+    let total = 0;
+    for (const d of UPGRADES) for (let l = 0; l < d.maxLevel; l++) total += upgradeCost(d, l);
+    const w = World.create(4);
+    run(w, 15 * 60);
+    expect(total).toBeGreaterThan(w.player.earned * 3);
+  });
+
   it('refuses unaffordable or locked purchases without spending', () => {
     const f = createFaction(1, 'You', '#000', true);
     f.energy = 1;
     expect(buy(f, 'rate').ok).toBe(false);
     f.energy = 1e6;
-    expect(buy(f, 'efficiency').ok).toBe(false);
+    expect(buy(f, 'chain').ok).toBe(false);
     expect(f.energy).toBe(1e6);
   });
 
-  it('claims and conversions earn energy', () => {
-    const w = run(World.create(3), 60);
-    expect(w.player.earned).toBeGreaterThan(40);
+  it('holding ground pays every second, more for more ground, even when nothing moves', () => {
+    const income = (cells: number) => {
+      const w = lab();
+      for (let i = 0; i < cells; i++) w.transfer(i % 50, Math.floor(i / 50), PLAYER);
+      w.player.stats.rate = 0;
+      run(w, 10);
+      return w.player.earned;
+    };
+    expect(income(10)).toBeCloseTo(10 * (ENERGY.base + ENERGY.perCell * 10), 1);
+    expect(income(1000)).toBeCloseTo(10 * (ENERGY.base + ENERGY.perCell * 1000), 1);
   });
 });
 
-describe('rivals', () => {
-  it('a rival arriving later has earned about as much as you, spent on its own route', () => {
-    const w = World.create(6);
-    run(w, 240);
-    const p = w.player;
-    const late = w.spawnRival(1, [60, 80], 0, 0)!;
-    expect(late).not.toBeNull();
-    expect(late.earned).toBeGreaterThan(p.earned * 0.8);
-    expect(late.earned).toBeLessThan(p.earned * 1.2);
-    const spent = Object.values(late.levels).reduce((a, b) => a + b, 0);
-    expect(spent).toBeGreaterThan(5);
-  });
-
-  it('rivals with different profiles end up with different builds', () => {
-    const w = World.create(7);
-    run(w, 120);
-    const builds = new Set<string>();
-    for (let i = 0; i < 6; i++) {
-      const f = w.spawnRival(i, [80, 120], 0, 0);
-      if (f) builds.add(Object.entries(f.levels).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k]) => k).join('+'));
+describe('matches', () => {
+  it('everyone starts at once, spread around the arena, with the same energy', () => {
+    for (const league of [1, 4, 10]) {
+      const w = World.create(league, league);
+      const info = leagueInfo(league);
+      expect(w.factions.size).toBe(info.rivals + 1);
+      const fs = [...w.factions.values()];
+      for (const f of fs) {
+        expect(f.energy).toBe(START.playerEnergy);
+        expect(w.inBounds(f.homeX, f.homeY)).toBe(true);
+      }
+      for (let i = 0; i < fs.length; i++) {
+        for (let j = i + 1; j < fs.length; j++) {
+          expect(Math.hypot(fs[i].homeX - fs[j].homeX, fs[i].homeY - fs[j].homeY)).toBeGreaterThan(w.size * 0.2);
+        }
+      }
     }
-    expect(builds.size).toBeGreaterThan(2);
   });
 
-  it('new rivals appear as your territory reaches further, never inside anyone’s territory', () => {
-    const w = World.create(8);
-    grantLevels(w.player, { rate: 30, power: 10, resistance: 10 });
-    const before = w.factions.size;
-    run(w, 600);
-    expect(w.factions.size).toBeGreaterThan(before);
+  it('nothing is ever taken outside the arena', () => {
+    const w = run(World.create(5), 600);
+    let outside = 0;
+    w.grid.forEachOwned((x, y) => {
+      if (!w.inBounds(x, y)) outside++;
+    });
+    expect(outside).toBe(0);
     expect(w.audit()).toEqual([]);
   });
 
-  it('spawn sites are rejected when anything is near', () => {
-    const w = lab();
-    for (let x = -30; x <= 30; x++) for (let y = -30; y <= 30; y++) w.transfer(x, y, PLAYER);
-    expect(w.spawnRival(0, [5, 10], 0, 0)).toBeNull();
+  it('holding the winning share ends the match, for you or for a rival', () => {
+    for (const winner of [PLAYER, 2]) {
+      const w = World.create(6);
+      let n = 0;
+      for (let y = 0; y < w.size && n < w.winCells; y++) for (let x = 0; x < w.size && n < w.winCells; x++, n++) w.transfer(x, y, winner);
+      w.step();
+      expect(w.ended).toBe(true);
+      expect(w.winner).toBe(winner);
+      expect(w.events.some((e) => e.type === 'won' && e.faction === winner)).toBe(true);
+    }
   });
 
-  it('far-away factions go dormant and cost nothing', () => {
+  it('leagues get harder: more rivals, richer rivals, a bigger arena', () => {
+    for (let l = 2; l <= MATCH.maxLeague; l++) {
+      const a = leagueInfo(l - 1);
+      const b = leagueInfo(l);
+      expect(b.rivals).toBeGreaterThanOrEqual(a.rivals);
+      expect(b.size).toBeGreaterThanOrEqual(a.size);
+      expect(b.rivalIncome).toBeGreaterThan(a.rivalIncome);
+    }
+  });
+
+  it('matches end in a reasonable time instead of stalling', () => {
+    for (const seed of [1, 2, 3]) {
+      const w = World.create(seed);
+      // Everyone shops like a rival, so the player isn't a dead weight.
+      w.player.profile = 'balanced';
+      for (let t = 0; t < 35 * 60 * TIME.ticksPerSecond && !w.ended; t++) {
+        w.step();
+        w.events.length = 0;
+        w.rivalShop(w.player);
+      }
+      expect(w.ended, `seed ${seed} still going after 35 min`).toBe(true);
+      expect(w.time).toBeGreaterThan(8 * 60);
+    }
+  }, 60000);
+});
+
+describe('strength in numbers and ganging up on the leader', () => {
+  it('the bigger side has the edge in border fights', () => {
     const w = lab();
-    w.placeCluster(w.player, 0, 0);
-    const far = createFaction(2, 'Far', '#f00', false, 'balanced');
-    w.factions.set(2, far);
-    w.placeCluster(far, 5000, 5000);
-    const cells = far.cells;
-    run(w, 20);
-    expect(w.isDormant(far)).toBe(true);
-    expect(far.cells).toBe(cells);
+    const rival = createFaction(2, 'Rival', '#f00', false, 'balanced');
+    w.factions.set(2, rival);
+    for (let x = 0; x < 40; x++) for (let y = 0; y < 40; y++) w.transfer(x, y, PLAYER);
+    for (let x = 40; x < 50; x++) for (let y = 0; y < 10; y++) w.transfer(x, y, 2);
+    expect(w.resistMult(w.player, rival, 40, 0)).toBeLessThan(1);
+    expect(w.resistMult(rival, w.player, 39, 0)).toBeGreaterThan(1);
+    expect(w.resistMult(w.player, rival, 40, 0)).toBeGreaterThanOrEqual(1 / COMBAT.sizeEdgeMax);
+  });
+
+  it('rivals prefer the leader’s cells, and only once the lead is clear', () => {
+    const w = lab();
+    const a = createFaction(2, 'A', '#f00', false, 'balanced');
+    const b = createFaction(3, 'B', '#0f0', false, 'balanced');
+    w.factions.set(2, a);
+    w.factions.set(3, b);
+    // A rival cell at (0,0) touching both you (west) and another rival (east).
+    w.transfer(0, 0, 2);
+    w.transfer(-1, 0, PLAYER);
+    w.transfer(1, 0, 3);
+    const ctx = (leader: number, focus: number) => ({ grid: w.grid, f: a, now: 0, cx: 0, cy: 0, r: 1, lo: -Infinity, hi: Infinity, leader, leaderFocus: focus });
+    const youCell = (leader: number, focus: number) => score(ctx(leader, focus), -1, 0, 0, 0);
+    const bCell = (leader: number, focus: number) => score(ctx(leader, focus), 1, 0, 0, 0);
+    expect(youCell(0, 1)).toBeCloseTo(bCell(0, 1));
+    expect(youCell(PLAYER, LEADER.maxFocus)).toBeGreaterThan(bCell(PLAYER, LEADER.maxFocus) * 2.5);
+    // You never gang up automatically: your choices are yours.
+    const mine = { ...ctx(2, LEADER.maxFocus), f: w.player };
+    expect(score(mine, 0, 0, -1, 0)).toBeCloseTo(score({ ...mine, leader: 0, leaderFocus: 1 }, 0, 0, -1, 0));
   });
 });
 
@@ -460,20 +519,6 @@ describe('special upgrades', () => {
     return { w, rival };
   };
 
-  it('Outposts plant cells beyond the border that are not touching it', () => {
-    const w = lab(2);
-    w.placeCluster(w.player, 0, 0);
-    grantLevels(w.player, { outposts: 10 });
-    let outposts = 0;
-    for (let t = 0; t < 1200; t++) {
-      w.step();
-      for (const e of w.events) if (e.type === 'capture' && e.kind === 'outpost') outposts++;
-      w.events.length = 0;
-    }
-    expect(outposts).toBeGreaterThan(3);
-    expect(w.audit()).toEqual([]);
-  });
-
   it('Chain Reaction converts extra enemy cells in cascades', () => {
     const count = (levels: Record<string, number>) => {
       const { w } = duel(3);
@@ -488,7 +533,7 @@ describe('special upgrades', () => {
       return { chains, converted: w.player.converted };
     };
     const without = count({});
-    const withChain = count({ chain: 8 });
+    const withChain = count({ chain: 6 });
     expect(without.chains).toBe(0);
     expect(withChain.chains).toBeGreaterThan(10);
     expect(withChain.converted).toBeGreaterThan(without.converted);
@@ -498,16 +543,16 @@ describe('special upgrades', () => {
     const { w, rival } = duel(4);
     // A small rival pocket deep inside our side, cut off from the main rival block.
     for (let y = -2; y <= 0; y++) for (let x = -9; x <= -7; x++) w.transfer(x, y, 2);
-    grantLevels(w.player, { siege: 8 });
+    grantLevels(w.player, { siege: 6 });
     expect(w.isPocket(rival, -8, -1)).toBe(true);
     expect(w.isPocket(rival, 6, 0)).toBe(false);
-    expect(w.resistMult(w.player, rival, -8, -1)).toBeLessThan(0.5);
-    expect(w.resistMult(w.player, rival, 6, 0)).toBe(1);
+    // Relative to the main block (both share the same strength-in-numbers edge).
+    expect(w.resistMult(w.player, rival, -8, -1) / w.resistMult(w.player, rival, 6, 0)).toBeLessThan(0.5);
   });
 
   it('Counterattack strikes back at attackers when their attacks fail', () => {
     const { w, rival } = duel(5);
-    grantLevels(rival, { counter: 8, resistance: 20 });
+    grantLevels(rival, { counter: 6, resistance: 15 });
     grantLevels(w.player, { rate: 20 });
     setBehavior(w.player, { focus: 1 });
     let counters = 0;
@@ -519,28 +564,6 @@ describe('special upgrades', () => {
     expect(counters).toBeGreaterThan(3);
   });
 
-  it('Tribute pays energy even when nothing is happening', () => {
-    const w = lab(6);
-    for (let x = 0; x < 20; x++) for (let y = 0; y < 10; y++) w.transfer(x, y, PLAYER);
-    grantLevels(w.player, { tribute: 4 });
-    w.player.stats.rate = 0;
-    const e0 = w.player.energy;
-    run(w, 10);
-    // 200 cells × 1 energy/s per 100 cells × 10 s = 20.
-    expect(w.player.energy - e0).toBeCloseTo(20, 0);
-  });
-
-  it('Capital makes home ground much harder to take, fading with distance', () => {
-    const { w, rival } = duel(7);
-    grantLevels(rival, { capital: 10 });
-    const home = w.resistMult(w.player, rival, rival.homeX, rival.homeY);
-    const near = w.resistMult(w.player, rival, rival.homeX + 3, rival.homeY);
-    const far = w.resistMult(w.player, rival, rival.homeX + 10, rival.homeY);
-    expect(home).toBeCloseTo(6, 5);
-    expect(near).toBeGreaterThan(1);
-    expect(near).toBeLessThan(home);
-    expect(far).toBe(1);
-  });
 });
 
 describe('caches', () => {

@@ -24,6 +24,20 @@ export interface LifetimeStats {
   energyEarned: number;
 }
 
+/** League progress: which leagues are open and your fastest win in each. */
+export interface Progress {
+  /** Highest league you may play (winning a league opens the next). */
+  unlocked: number;
+  /** Fastest win per league, in seconds of match time. */
+  best: Record<number, number>;
+  wins: number;
+  losses: number;
+}
+
+export function createProgress(): Progress {
+  return { unlocked: 1, best: {}, wins: 0, losses: 0 };
+}
+
 export function createSettings(reducedMotion = false): Settings {
   return { sound: true, volume: 0.6, reducedMotion, diagnostics: false, speed: 1, introSeen: false };
 }

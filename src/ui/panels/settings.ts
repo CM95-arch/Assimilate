@@ -44,10 +44,10 @@ export const settingsPanel: Panel = {
         },
       })),
       h('div', { class: 'row' }, h('div', { class: 'label' }, h('strong', { text: 'Last saved' }), saved)),
-      h('p', { class: 'section-title', text: 'Run' }),
-      row('New run', 'Start over in a new world. Lifetime statistics are kept.', h('button', { class: 'btn', type: 'button', 'data-action': 'new-run', text: 'New run…', on: { click: () => ctx.confirmNewRun() } })),
+      h('p', { class: 'section-title', text: 'Match' }),
+      row('Restart match', 'Start this league’s match over. Statistics and league progress are kept.', h('button', { class: 'btn', type: 'button', 'data-action': 'new-run', text: 'Restart…', on: { click: () => ctx.confirmNewRun() } })),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', type: 'button', 'data-action': 'reset', text: 'Reset all progress…', on: { click: () => ctx.confirmReset() } })),
-      h('p', { class: 'note', style: 'margin-top:14px', text: 'Assimilate · build 0.3.1' }),
+      h('p', { class: 'note', style: 'margin-top:14px', text: 'Assimilate · build 0.4.0' }),
     );
   },
   refresh(ctx, root) {

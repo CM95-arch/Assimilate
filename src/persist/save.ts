@@ -2,13 +2,13 @@
 // Territory is stored per chunk: owner bytes plus a coarse "held for" age (for entrenchment).
 // Everything derived (frontiers, counts, stats) is rebuilt on load rather than trusted.
 
-import { GRID, SAVE } from '../config/balance';
+import { GRID, MATCH, SAVE } from '../config/balance';
 import { PROFILE_BY_ID } from '../config/profiles';
 import { BEHAVIOR_KEYS, UPGRADE_BY_ID, type Behavior } from '../config/upgrades';
 import { createFaction, type Faction } from '../sim/faction';
 import { Chunk, cellKey } from '../sim/grid';
 import { World } from '../sim/world';
-import { createSettings, createStats, type LifetimeStats, type Settings } from '../state';
+import { createProgress, createSettings, createStats, type LifetimeStats, type Progress, type Settings } from '../state';
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -29,14 +29,14 @@ export interface SaveFile {
   version: number;
   savedAt: number;
   world: {
-    seed: number; tick: number; rng: number; ended: boolean;
-    counters: { rivalsCreated: number; nextSpawnCheck: number };
+    seed: number; league: number; tick: number; rng: number; ended: boolean; winner: number;
     factions: SavedFaction[];
     chunks: { cx: number; cy: number; owner: string; age: string }[];
   };
   scale: number;
   settings: Settings;
   stats: LifetimeStats;
+  progress: Progress;
 }
 
 export interface Snapshot {
@@ -44,6 +44,7 @@ export interface Snapshot {
   scale: number;
   settings: Settings;
   stats: LifetimeStats;
+  progress: Progress;
 }
 
 /** Seconds per step of the stored "held for" age (255 steps ≈ 8.5 minutes). */
@@ -81,10 +82,11 @@ export function serialize(snap: Snapshot, now: number): string {
   const file: SaveFile = {
     version: SAVE.version,
     savedAt: now,
-    world: { seed: w.seed, tick: w.tick, rng: w.rng.state, ended: w.ended, counters: w.counters, factions, chunks },
+    world: { seed: w.seed, league: w.league, tick: w.tick, rng: w.rng.state, ended: w.ended, winner: w.winner, factions, chunks },
     scale: snap.scale,
     settings: snap.settings,
     stats: snap.stats,
+    progress: snap.progress,
   };
   return JSON.stringify(file);
 }
@@ -113,6 +115,21 @@ function sanitizeStats(v: unknown): LifetimeStats {
   for (const k of Object.keys(base) as (keyof LifetimeStats)[]) out[k] = num(s[k], base[k], 0);
   out.runsStarted = Math.max(1, Math.floor(out.runsStarted));
   out.highestScale = Math.max(1, Math.floor(out.highestScale));
+  return out;
+}
+
+export function sanitizeProgress(v: unknown): Progress {
+  const s = (v ?? {}) as Record<string, unknown>;
+  const out = createProgress();
+  out.unlocked = Math.floor(num(s.unlocked, 1, 1, MATCH.maxLeague));
+  out.wins = Math.floor(num(s.wins, 0, 0));
+  out.losses = Math.floor(num(s.losses, 0, 0));
+  if (s.best && typeof s.best === 'object') {
+    for (const [k, t] of Object.entries(s.best as Record<string, unknown>)) {
+      const l = Number(k);
+      if (Number.isInteger(l) && l >= 1 && l <= MATCH.maxLeague && typeof t === 'number' && t > 0) out.best[l] = t;
+    }
+  }
   return out;
 }
 
@@ -170,12 +187,11 @@ export function parse(raw: string): Snapshot {
   if (file.version > SAVE.version) throw new Error(`Save version ${file.version} is newer than this game`);
   const src = file.world;
   if (!src || !Array.isArray(src.factions) || !Array.isArray(src.chunks)) throw new Error('Save has no world');
-  const world = new World(Math.floor(num(src.seed, 1, 0, 2 ** 32)) >>> 0);
+  const world = new World(Math.floor(num(src.seed, 1, 0, 2 ** 32)) >>> 0, Math.floor(num(src.league, 1, 1, MATCH.maxLeague)));
   world.tick = Math.floor(num(src.tick, 0, 0, 2 ** 31));
   world.rng.state = Math.floor(num(src.rng, 1, 0, 2 ** 32)) >>> 0;
   world.ended = bool(src.ended, false);
-  const counters = (src.counters ?? {}) as Partial<World['counters']>;
-  world.counters = { rivalsCreated: Math.floor(num(counters.rivalsCreated, 0, 0, 1e6)), nextSpawnCheck: num(counters.nextSpawnCheck, 0, 0) };
+  world.winner = Math.floor(num(src.winner, 0, 0, 254));
   for (const raw of src.factions) {
     const f = faction(raw);
     world.factions.set(f.id, f);
@@ -191,7 +207,7 @@ export function parse(raw: string): Snapshot {
     const chunk = new Chunk(cx, cy);
     for (let i = 0; i < N; i++) {
       const o = owner[i];
-      if (o === 0 || !world.factions.has(o)) continue;
+      if (o === 0 || !world.factions.has(o) || !world.inBounds(cx * GRID.chunk + (i % GRID.chunk), cy * GRID.chunk + Math.floor(i / GRID.chunk))) continue;
       chunk.owner[i] = o;
       chunk.since[i] = world.time - age[i] * AGE_STEP;
       chunk.count++;
@@ -199,7 +215,7 @@ export function parse(raw: string): Snapshot {
     world.grid.chunks.set(cellKey(cx, cy), chunk);
   }
   world.rebuildCaches();
-  return { world, scale: Math.floor(num(file.scale, 0, 0, 20)), settings: sanitizeSettings(file.settings), stats: sanitizeStats(file.stats) };
+  return { world, scale: Math.floor(num(file.scale, 0, 0, 20)), settings: sanitizeSettings(file.settings), stats: sanitizeStats(file.stats), progress: sanitizeProgress(file.progress) };
 }
 
 export interface LoadResult {
@@ -208,11 +224,14 @@ export interface LoadResult {
   corrupt: boolean;
   /** A save from the earlier (pre-redesign) version was found and set aside. */
   outdated: boolean;
+  /** Settings and statistics rescued from an outdated save, if readable. */
+  kept: { settings: Settings; stats: LifetimeStats } | null;
 }
 
 export function load(store: StorageLike): LoadResult {
   let corrupt = false;
   let outdated = false;
+  let kept: LoadResult['kept'] = null;
   for (const [key, source] of [[SAVE.key, 'main'], [SAVE.backupKey, 'backup']] as const) {
     let raw: string | null = null;
     try {
@@ -222,16 +241,27 @@ export function load(store: StorageLike): LoadResult {
     }
     if (!raw) continue;
     try {
-      return { snapshot: parse(raw), source, corrupt, outdated };
+      return { snapshot: parse(raw), source, corrupt, outdated, kept };
     } catch (e) {
-      if (e instanceof OutdatedSaveError) outdated = true;
+      if (e instanceof OutdatedSaveError) {
+        outdated = true;
+        // The world can't carry over, but your settings and lifetime statistics can.
+        if (!kept) {
+          try {
+            const old = JSON.parse(raw) as Partial<SaveFile>;
+            kept = { settings: sanitizeSettings(old.settings), stats: sanitizeStats(old.stats) };
+          } catch {
+            kept = null;
+          }
+        }
+      }
       else {
         console.warn(`Save "${key}" unreadable:`, e);
         corrupt = true;
       }
     }
   }
-  return { snapshot: null, source: 'none', corrupt, outdated };
+  return { snapshot: null, source: 'none', corrupt, outdated, kept };
 }
 
 /** Write the save, keeping the previous good save as a backup. Returns false if storage failed. */

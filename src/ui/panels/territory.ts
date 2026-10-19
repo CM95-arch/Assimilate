@@ -2,6 +2,7 @@
 
 import { PROFILE_BY_ID } from '../../config/profiles';
 import { UPGRADE_BY_ID } from '../../config/upgrades';
+import { MATCH } from '../../config/balance';
 import { centroid, radius, type Faction } from '../../sim/faction';
 import type { World } from '../../sim/world';
 import { fmt } from '../../util/format';
@@ -22,8 +23,8 @@ export function buildSummary(f: Faction): string {
 function youRows(w: World): [string, string, string][] {
   const p = w.player;
   return [
+    ['share', 'Share of the arena', `${Math.floor((p.cells / (w.size * w.size)) * 100)}% (goal ${Math.round(MATCH.winShare * 100)}%)`],
     ['cells', 'Cells held', fmt(p.cells)],
-    ['border', 'Border cells', fmt(p.frontier.size)],
     ['attempts', 'Expansion attempts', `${attemptsPerSecond(w, p).toFixed(1)}/s`],
     ['tempo', 'World tempo (rises over 12 min)', `×${w.tempo().toFixed(2)}`],
     ['power', 'Conversion power', p.stats.power.toFixed(2)],
@@ -42,12 +43,14 @@ function flagText(w: World): string {
 
 function rivalStatus(w: World, f: Faction, contacts: number[]): string {
   if (!f.alive) return 'Eliminated';
-  if (contacts.includes(f.id)) return 'Bordering you';
+  const share = `${Math.floor((f.cells / (w.size * w.size)) * 100)}% of the arena`;
+  if (w.leader === f.id) return `${share} · leading: the others are ganging up on it`;
+  if (contacts.includes(f.id)) return `${share} · bordering you`;
   const a = centroid(w.player);
   const b = centroid(f);
   // Approximate gap between the two territories' edges, not their centres.
   const gap = Math.max(1, Math.round(Math.hypot(a.x - b.x, a.y - b.y) - radius(w.player) - radius(f)));
-  return `About ${fmt(gap)} cells away`;
+  return `${share} · about ${fmt(gap)} cells away`;
 }
 
 function rivalList(ctx: UiContext): HTMLElement {
@@ -98,7 +101,7 @@ export const territoryPanel: Panel = {
       h('p', { class: 'build-line', 'data-k': 'build', text: buildSummary(w.player) }),
       h('p', { class: 'section-title', text: 'Rivals' }),
       h('div', { 'data-k': 'rivals' }, rivalList(ctx)),
-      h('p', { class: 'note', style: 'margin-top:12px', text: 'Every rival has earned about as much as you and spent it on its own route. More appear as your territory reaches further out.' }),
+      h('p', { class: 'note', style: 'margin-top:12px', text: 'Every rival started when you did, earns by the same rules and spends on its own route. Whoever leads clearly becomes everyone else’s target, you included.' }),
     );
   },
   refresh(ctx, root) {

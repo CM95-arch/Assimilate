@@ -1,21 +1,21 @@
-// Live controller: runs simulation ticks on a fixed clock, turns events into animations and
-// sounds, keeps lifetime statistics and frames the camera. The rules live in src/sim.
+// Live controller: runs the current match's ticks on a fixed clock, turns events into animations
+// and sounds, keeps statistics and league progress, and frames the camera. The rules live in src/sim.
 
 import { AudioEngine } from './audio/audio';
-import { ANIM, CAMERA, COLORS, TIME } from './config/balance';
+import { ANIM, CAMERA, COLORS, MATCH, TIME } from './config/balance';
 import { Anims } from './render/anims';
 import { Camera } from './render/camera';
 import { centroid } from './sim/faction';
 import { NEUTRAL } from './sim/grid';
 import { randomSeed } from './sim/rng';
 import { PLAYER, World } from './sim/world';
-import { createSettings, createStats, type LifetimeStats, type Settings, type Speed } from './state';
+import { createProgress, createSettings, createStats, type LifetimeStats, type Progress, type Settings, type Speed } from './state';
 
 export type GameEvent =
   | { type: 'scale'; level: number }
-  | { type: 'spawn'; faction: number }
   | { type: 'eliminated'; faction: number; byPlayer: boolean }
-  | { type: 'defeat' }
+  /** The match is over: you won, a rival won (`winner`), or you were wiped out (winner 0). */
+  | { type: 'match-end'; won: boolean; winner: number; unlocked: boolean }
   | { type: 'contact'; faction: number }
   | { type: 'flag-reached' }
   | { type: 'flag'; action: 'planted' | 'removed' | 'hint' };
@@ -27,6 +27,7 @@ export class Game {
   readonly audio = new AudioEngine();
   settings: Settings;
   stats: LifetimeStats;
+  progress: Progress;
   paused = false;
   private acc = 0;
   /** Measured ticks per second and cost (diagnostics). */
@@ -41,13 +42,17 @@ export class Game {
   private countedEnergy = 0;
   readonly events: GameEvent[] = [];
 
-  constructor(world: World | null, scale = 0, settings = createSettings(), stats = createStats()) {
+  constructor(world: World | null, scale = 0, settings = createSettings(), stats = createStats(), progress = createProgress()) {
     this.settings = settings;
     this.stats = stats;
-    this.world = world ?? World.create(randomSeed());
+    this.progress = progress;
+    this.world = world ?? World.create(randomSeed(), 1);
     this.applyMotion();
     const c = centroid(this.world.player);
     this.camera.snap(scale, c.x + 0.5, c.y + 0.5);
+    // A save from late in a match may already show the whole arena: centre on it.
+    const t = this.cameraTarget();
+    this.camera.snap(scale, t.x, t.y);
     for (const id of this.world.contacts()) this.met.add(id);
     this.countedEnergy = this.world.player.earned;
   }
@@ -64,9 +69,9 @@ export class Game {
     this.anims.reduced = this.settings.reducedMotion;
   }
 
-  /** Start a new run (new world). Lifetime statistics are kept. */
-  newRun(seed: number = randomSeed()) {
-    this.world = World.create(seed);
+  /** Start a new match in `league` (default: the current one). Statistics and progress are kept. */
+  newRun(seed: number = randomSeed(), league = this.world.league) {
+    this.world = World.create(seed, Math.min(league, this.progress.unlocked));
     this.anims.clear();
     this.met.clear();
     this.countedEnergy = 0;
@@ -133,7 +138,6 @@ export class Game {
           // Chain links pop one after another, so a cascade reads as a wave.
           if (e.kind === 'chain') start = now + (e.link ?? 1) * ANIM.chainStepMs;
           this.anims.add({ x: e.x, y: e.y, kind: 'capture', start, fromColor: from || COLORS.neutral, toColor: colorOf(e.by) });
-          if (e.kind === 'outpost') this.anims.addRing({ x: e.x, y: e.y, start, color: colorOf(e.by) });
           if (e.by === PLAYER) {
             if (e.from === NEUTRAL) {
               this.stats.cellsClaimed++;
@@ -151,9 +155,6 @@ export class Game {
         case 'hit':
           this.anims.add({ x: e.x, y: e.y, kind: 'hit', start: now + Math.random() * span, fromColor: colorOf(e.owner), toColor: colorOf(e.owner) });
           break;
-        case 'spawn':
-          this.events.push({ type: 'spawn', faction: e.faction });
-          break;
         case 'eliminated':
           if (e.faction !== PLAYER) {
             if (e.by === PLAYER) this.stats.rivalsEliminated++;
@@ -161,7 +162,10 @@ export class Game {
           }
           break;
         case 'defeat':
-          this.events.push({ type: 'defeat' });
+          this.endMatch(0);
+          break;
+        case 'won':
+          this.endMatch(e.faction);
           break;
         case 'flag':
           if (e.faction === PLAYER) this.events.push({ type: 'flag-reached' });
@@ -180,17 +184,35 @@ export class Game {
     }
   }
 
-  /** Follow the player's territory and widen the view as its extent grows. */
+  /** Record the result in league progress and tell the UI. */
+  private endMatch(winner: number) {
+    const won = winner === PLAYER;
+    const pr = this.progress;
+    const league = this.world.league;
+    let unlocked = false;
+    if (won) {
+      pr.wins++;
+      const t = this.world.time;
+      if (!pr.best[league] || t < pr.best[league]) pr.best[league] = t;
+      if (league === pr.unlocked && league < MATCH.maxLeague) {
+        pr.unlocked++;
+        unlocked = true;
+      }
+    } else pr.losses++;
+    this.events.push({ type: 'match-end', won, winner, unlocked });
+  }
+
+  /** Follow the player's territory and widen the view as its extent grows, up to the whole arena. */
   private frameCamera(dt: number) {
     const p = this.world.player;
     const cam = this.camera;
-    const tx = (p.minX + p.maxX + 1) / 2;
-    const ty = (p.minY + p.maxY + 1) / 2;
-    cam.update(dt, tx, ty);
+    const target = this.cameraTarget();
+    cam.update(dt, target.x, target.y);
     if (p.cells === 0) return;
     const extent = Math.max(p.maxX - p.minX, p.maxY - p.minY) + 3;
     let level = cam.level;
-    while (level < CAMERA.viewCells.length - 1 && extent > CAMERA.viewCells[level] * CAMERA.fitFraction) level++;
+    const last = this.arenaLevel();
+    while (level < last && extent > CAMERA.viewCells[level] * CAMERA.fitFraction) level++;
     if (level > cam.level) {
       cam.zoomTo(level, this.settings.reducedMotion ? 0.5 : CAMERA.zoomSeconds);
       if (this.settings.sound) this.audio.whoosh();
@@ -222,11 +244,26 @@ export class Game {
     if (this.settings.sound) this.audio.click();
   }
 
-  status(): 'Expanding' | 'At war' | 'Losing ground' | 'Paused' | 'Defeated' {
+  /** Where the camera looks: your territory, until the view is wide enough to show the whole arena. */
+  cameraTarget(): { x: number; y: number } {
     const w = this.world;
-    if (w.ended) return 'Defeated';
+    const p = w.player;
+    if (this.camera.level >= this.arenaLevel() || p.cells === 0) return { x: w.size / 2, y: w.size / 2 };
+    return { x: (p.minX + p.maxX + 1) / 2, y: (p.minY + p.maxY + 1) / 2 };
+  }
+
+  /** The first scale that shows the whole arena; the view never needs to widen beyond it. */
+  arenaLevel(): number {
+    const i = CAMERA.viewCells.findIndex((v) => v >= this.world.size + 4);
+    return i < 0 ? CAMERA.viewCells.length - 1 : i;
+  }
+
+  status(): 'Expanding' | 'At war' | 'Losing ground' | 'Leading' | 'Paused' | 'Victory' | 'Defeated' {
+    const w = this.world;
+    if (w.ended) return w.winner === PLAYER ? 'Victory' : 'Defeated';
     if (this.paused) return 'Paused';
     if (w.cellRate() < -0.2) return 'Losing ground';
+    if (w.leader === PLAYER) return 'Leading';
     return w.contacts().length ? 'At war' : 'Expanding';
   }
 }

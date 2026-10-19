@@ -40,9 +40,6 @@ export const BASE_STATS = {
   pressure: 0.25,
   /** Defence bonus per defending neighbour of the target (0–4 sides). */
   reinforcement: 0.25,
-  /** Extra resistance a fully entrenched cell gets, and seconds to fully entrench. */
-  entrench: 0,
-  entrenchSeconds: 40,
   /** Behaviour priorities. Set from the faction's behaviour sliders (see BEHAVIOR), not upgrades. */
   aggression: 0,
   consolidation: 0.4,
@@ -50,17 +47,12 @@ export const BASE_STATS = {
   flanking: 0,
   threat: 0,
   recovery: 0,
-  /** Energy multipliers and upgrade price multiplier. */
+  /** Multiplier on all energy income. */
   yield: 1,
-  conquest: 1,
-  costMult: 1,
   /** Special upgrade effects (0 = not owned). See upgrades.ts for what each does. */
-  outpost: 0,
   chain: 0,
   siege: 0,
   counter: 0,
-  tribute: 0,
-  capital: 0,
 };
 
 /**
@@ -74,15 +66,11 @@ export const TEMPO = {
 
 /** Tuning for the special upgrades. */
 export const SPECIAL = {
-  /** Outposts land this many cells beyond the border cell they launch from. */
-  outpostDistance: [3, 5] as const,
   /** Each further link of a chain reaction is this much less likely than the last. */
   chainDecay: 0.6,
   chainMaxLinks: 6,
   /** An enemy group smaller than this, and less than half its faction, counts as cut off. */
   siegePocketCells: 150,
-  /** Capital protection fades to nothing at this distance (cells) from home. */
-  capitalRadius: 7,
 };
 
 /** Rally flag: your territory leans toward the flag while still growing everywhere. */
@@ -96,6 +84,13 @@ export const FLAG = {
 };
 
 export const COMBAT = {
+  /**
+   * Strength in numbers: a faction attacking a smaller one gets (its cells ÷ theirs)^sizeEdge more
+   * power (and less against a bigger one), clamped to ×1/sizeEdgeMax…×sizeEdgeMax. Leads turn into
+   * breakthroughs instead of endless even fronts.
+   */
+  sizeEdge: 0.35,
+  sizeEdgeMax: 2,
   /** Scales every conversion chance, so fronts move steadily rather than flickering. */
   conversionScale: 0.75,
   /** How strongly targets are preferred: enemy cells start less attractive than open ground. */
@@ -106,10 +101,15 @@ export const COMBAT = {
   recoverySeconds: 30,
 };
 
+/**
+ * Energy comes mainly from holding ground: a trickle plus an amount per cell held, every second.
+ * Claiming open ground pays little; taking enemy ground pays well.
+ */
 export const ENERGY = {
-  /** Per neutral cell claimed and per enemy cell converted, before multipliers. */
-  neutral: 2,
-  conquest: 6,
+  base: 0.6,
+  perCell: 0.015,
+  neutral: 0.5,
+  conquest: 3,
   /** Window for the HUD's energy-per-second readout. */
   rateWindowSeconds: 6,
 };
@@ -130,26 +130,46 @@ export const BEHAVIOR = {
   exploit: 3,
 };
 
-/** Rival placement and pacing. */
-export const RIVALS = {
-  /** First rival's distance from your start (cells): first contact after ~2.5–4 minutes. */
-  firstDistance: [16, 19] as const,
-  secondDistance: [42, 50] as const,
-  /** New rivals appear this far beyond your territory's reach. */
-  spawnBeyond: [26, 46] as const,
-  /** Rivals wanted near you: base + one more per this many cells of reach. */
-  baseCount: 2,
-  reachPerExtra: 28,
-  maxAlive: 9,
-  /** A spawn site must be empty for this radius, and this far from any territory. */
-  clearRadius: 6,
-  minGapToTerritory: 12,
-  /** Factions further than this (beyond your reach) pause until you come closer. */
-  dormantBeyond: 140,
-  /** A newly spawned rival gets your earned energy × a random factor in this range. */
-  budgetJitter: [0.85, 1.15] as const,
-  /** How often (s) spawning is reconsidered. */
-  checkSeconds: 2,
+/**
+ * Matches: a square arena with you and a few rivals spread around it. Whoever first holds
+ * `winShare` of the arena wins. Each league you win unlocks the next, which is bigger, more
+ * crowded and has richer rivals.
+ */
+export const MATCH = {
+  winShare: 0.6,
+  /** Starting clusters sit on a ring this far from the centre (fraction of the arena's side). */
+  ring: 0.33,
+  /** Highest league. */
+  maxLeague: 10,
+};
+
+export interface League {
+  league: number;
+  /** Side of the square arena, in cells. */
+  size: number;
+  rivals: number;
+  /** Rivals' income multiplier (1 = the same as yours). */
+  rivalIncome: number;
+}
+
+export function leagueInfo(league: number): League {
+  const l = Math.max(1, Math.min(MATCH.maxLeague, Math.floor(league)));
+  // A rival more every second league; the arena grows to keep about 600 cells per faction.
+  const rivals = Math.min(7, 2 + Math.ceil(l / 2));
+  return { league: l, size: Math.round(Math.sqrt(600 * (rivals + 1))), rivals, rivalIncome: 1 + 0.05 * (l - 1) };
+}
+
+/**
+ * Rivals gang up on whoever leads. When one faction is clearly bigger than the next, rivals
+ * prefer its cells by up to `maxFocus`× and go easier on each other.
+ */
+export const LEADER = {
+  /** Lead (leader's cells ÷ runner-up's) at which ganging up starts, and where it is at full strength. */
+  from: 1.15,
+  full: 2,
+  maxFocus: 2.2,
+  /** Rivals' preference for each other's (non-leader) cells while ganging up at full strength. */
+  truce: 0.65,
 };
 
 /** Camera framing. The view widens smoothly as your territory grows. */
@@ -169,8 +189,7 @@ export const CAMERA = {
 /** Rendering and animation timings (milliseconds unless noted). */
 export const ANIM = {
   captureMs: 260,
-  /** Outpost landing ring, and the delay between links of a chain reaction. */
-  ringMs: 650,
+  /** Delay between the links of a chain reaction, so a cascade reads as a wave. */
   chainStepMs: 70,
   hitMs: 220,
   captureStartScale: 0.55,
@@ -198,8 +217,8 @@ export const COLORS = {
   background: '#FBFBF9',
   neutral: '#EFEEEA',
   player: '#1B1B1B',
-  rivals: ['#E69A71', '#89AECC', '#88B69F', '#B49BCC', '#D8BE75', '#D77F78'],
-  rivalNames: ['Orange', 'Blue', 'Green', 'Purple', 'Yellow', 'Red'],
+  rivals: ['#E69A71', '#89AECC', '#88B69F', '#B49BCC', '#D8BE75', '#D77F78', '#7DB8B4', '#D49BB8'],
+  rivalNames: ['Orange', 'Blue', 'Green', 'Purple', 'Yellow', 'Red', 'Teal', 'Pink'],
 };
 
 export const AUDIO = {
@@ -210,6 +229,6 @@ export const AUDIO = {
 export const SAVE = {
   key: 'assimilate.save',
   backupKey: 'assimilate.save.bak',
-  version: 3,
+  version: 4,
   autosaveSeconds: 10,
 };
