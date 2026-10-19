@@ -27,6 +27,8 @@ export class Chunk {
   readonly hitAt = new Float32Array(CS * CS).fill(-1e9);
   /** Owned (non-neutral) cells in this chunk. */
   count = 0;
+  /** Bumped on every ownership change, so renderers know when to refresh a cached image. */
+  version = 0;
   constructor(readonly cx: number, readonly cy: number) {}
 }
 
@@ -90,6 +92,7 @@ export class Grid {
     }
     if (owner !== NEUTRAL) c.count++;
     c.owner[i] = owner;
+    c.version++;
     c.since[i] = t;
     return old;
   }

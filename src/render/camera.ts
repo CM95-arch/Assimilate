@@ -69,6 +69,9 @@ export class Camera {
       const a = 1 - Math.exp(-dt * CAMERA.followRate);
       this.cx += (tx - this.cx) * a;
       this.cy += (ty - this.cy) * a;
+      // Settle exactly once close, so a still view stays still and needn't be redrawn.
+      if (Math.abs(tx - this.cx) < 0.01) this.cx = tx;
+      if (Math.abs(ty - this.cy) < 0.01) this.cy = ty;
     }
   }
 

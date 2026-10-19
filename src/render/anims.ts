@@ -20,9 +20,11 @@ export class Anims {
   reduced = false;
   /** Cap so a huge battle can never flood the frame. */
   max = 600;
+  /** Off when cells are too small on screen for the effect to be visible. */
+  enabled = true;
 
   add(a: Anim) {
-    if (this.map.size >= this.max) return;
+    if (!this.enabled || this.map.size >= this.max) return;
     const k = cellKey(a.x, a.y);
     const old = this.map.get(k);
     // A capture always replaces a flinch; a flinch never interrupts a capture.

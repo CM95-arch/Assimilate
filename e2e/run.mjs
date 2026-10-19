@@ -526,6 +526,59 @@ for (const [name, value, expect] of [
   await ctx.close();
 }
 
+// ---------- late game on a phone (regression: lag and heat around scale 10) ----------
+{
+  const { ctx, page } = await newPage();
+  await page.goto(APP_URL);
+  await page.waitForTimeout(300);
+  await test('scale 10 battle on a phone: 60 fps, cheap frames, and unchanged frames are skipped', async () => {
+    await dismissTip(page);
+    const setup = await G(page, () => {
+      const a = window.__assimilate;
+      const w = a.game.world;
+      for (const f of w.factions.values()) a.grant(f.id, { rate: 60, resistance: 20, power: 20 });
+      a.grant(1, { resistance: 60, power: 45, reinforcement: 20 });
+      let n = 0;
+      while (a.game.camera.level < 9 && n < 30000 && !w.ended) {
+        w.step();
+        n++;
+        if (n % 50 === 0) a.game.update(0.016, performance.now());
+      }
+      w.events.length = 0;
+      let total = 0;
+      for (const f of w.factions.values()) total += f.cells;
+      return { level: a.game.camera.level, total, ended: w.ended };
+    });
+    assert(setup.level >= 8 && !setup.ended, `setup failed ${JSON.stringify(setup)}`);
+    await page.waitForTimeout(3500);
+    const r = await G(page, async () => {
+      const a = window.__assimilate;
+      const t = [];
+      const d = [];
+      const f0 = a.renderer.frames;
+      const s0 = performance.now();
+      let last = s0;
+      for (let i = 0; i < 90; i++) {
+        await new Promise((res) => requestAnimationFrame(res));
+        const n = performance.now();
+        t.push(n - last);
+        last = n;
+        d.push(a.renderer.info.drawMs);
+      }
+      const redraws = (a.renderer.frames - f0) / ((performance.now() - s0) / 1000);
+      t.sort((x, y) => x - y);
+      d.sort((x, y) => x - y);
+      return { frame: t[45], draw: d[45], redraws };
+    });
+    console.log(`      ${setup.total} cells on the map; frame ${r.frame.toFixed(1)} ms, draw ${r.draw.toFixed(1)} ms, ${r.redraws.toFixed(0)} redraws/s`);
+    assert(r.frame < 22, `slow frames: ${r.frame} ms`);
+    assert(r.draw < 5, `expensive draws: ${r.draw} ms`);
+    assert(r.redraws < 30, `redrawing unchanged frames (${r.redraws}/s)`);
+    await shot(page, '09-scale-10');
+  });
+  await ctx.close();
+}
+
 // ---------- desktop smoothness (regression: lag after ~30 s on large screens) ----------
 {
   const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 2 });

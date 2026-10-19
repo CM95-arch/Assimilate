@@ -144,6 +144,12 @@ export const ANIM = {
   roundAbovePx: 9,
   /** With more owned cells than this on screen, corners are square (much cheaper to draw). */
   roundMaxCells: 2500,
+  /**
+   * Below this pitch (CSS px) territory is drawn from cached per-chunk images instead of cell by
+   * cell, and below `animMinPx` capture/hit effects are skipped (too small to see).
+   */
+  bitmapBelowPx: 8,
+  animMinPx: 4,
 };
 
 export const COLORS = {
