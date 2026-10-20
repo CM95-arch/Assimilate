@@ -1,0 +1,599 @@
+<title>Prism</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600&display=swap">
+<style>
+  /* Layout: a quiet readout on top, the light table (a grid of squares) in the middle, purchases along the bottom. */
+  :root {
+    --paper: #FAFAF7;
+    --ink: #161616;
+    --mute: #8B8984;
+    --line: #E3E1DB;
+    --card: #FFFFFF;
+    --red: #E0412E;
+    --yellow: #F1B42C;
+    --blue: #2457C5;
+    --display: "Jost", "Futura", "Century Gothic", "Trebuchet MS", sans-serif;
+    color-scheme: light;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--display);
+    overflow: hidden; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  header {
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 14px);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .label { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute); font-weight: 500; }
+  #lum { font-size: 40px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  #rate { font-size: 14px; color: var(--mute); font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .ghost {
+    font: inherit; font-size: 12px; color: var(--mute); background: none; border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; min-height: 32px;
+  }
+  .ghost.armed { color: var(--red); border-color: var(--red); }
+  #hint {
+    min-height: 22px; text-align: center; font-size: 13px; color: var(--mute); padding: 6px 16px 0;
+  }
+  #hint b { color: var(--ink); font-weight: 600; }
+  #hint button { margin-left: 8px; min-height: 26px; padding: 3px 10px; }
+  canvas { flex: 1; min-height: 0; width: 100%; display: block; touch-action: manipulation; }
+  #shop {
+    display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
+    padding-top: 6px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  #shop::-webkit-scrollbar { display: none; }
+  .item {
+    flex: 0 0 auto; width: 124px; text-align: left; font: inherit; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 10px 10px 9px; display: flex; flex-direction: column; gap: 4px; cursor: pointer;
+    transition: transform 0.08s ease, opacity 0.2s ease, border-color 0.2s ease;
+  }
+  .item:active { transform: scale(0.97); }
+  .item:focus-visible, .ghost:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .item svg { width: 26px; height: 26px; }
+  .item .name { font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
+  .item .lv { font-size: 11px; color: var(--mute); font-weight: 500; }
+  .item .what { font-size: 12px; color: var(--mute); line-height: 1.25; min-height: 30px; }
+  .item .cost { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .item.poor { opacity: 0.45; }
+  .item.ready { border-color: var(--ink); }
+  .item.done { opacity: 0.35; cursor: default; }
+  #menu {
+    position: fixed; display: flex; gap: 6px; padding: 6px; background: var(--ink); border-radius: 999px; z-index: 5;
+    transform: translate(-50%, -100%);
+  }
+  #menu button {
+    font: inherit; font-size: 13px; color: var(--paper); background: none; border: 0; border-radius: 999px;
+    padding: 6px 12px; min-height: 34px; cursor: pointer;
+  }
+  #menu button:active { background: rgba(255, 255, 255, 0.15); }
+  #toast {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 168px);
+    background: var(--ink); color: var(--paper); font-size: 14px; padding: 9px 16px; border-radius: 999px;
+    opacity: 0; transition: opacity 0.3s ease; pointer-events: none; white-space: nowrap; max-width: calc(100vw - 32px);
+    overflow: hidden; text-overflow: ellipsis; z-index: 6;
+  }
+  #toast.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .item, #toast { transition: none; } }
+</style>
+
+<div id="app">
+  <header>
+    <div>
+      <div class="label">Lumens</div>
+      <div id="lum">0</div>
+      <div id="rate">+0/s</div>
+    </div>
+    <button id="reset" class="ghost" type="button">New table</button>
+  </header>
+  <div id="hint"></div>
+  <canvas id="table" aria-label="The light table: beams of light, prisms, mirrors and crystals on a grid"></canvas>
+  <nav id="shop" aria-label="Buy"></nav>
+</div>
+<div id="menu" hidden></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  const C = { red: '#E0412E', yellow: '#F1B42C', blue: '#2457C5', ink: '#161616', mute: '#8B8984', line: '#E3E1DB', paper: '#FAFAF7' };
+  // Beam colours: 0 = white light (drawn black), 1 red, 2 yellow, 3 blue.
+  const BEAM = [C.ink, C.red, C.yellow, C.blue];
+  const COLS = 7, ROWS = 9;
+  const KEY = 'prism.save.v1';
+
+  const fmt = (n) => {
+    if (n < 10) return (Math.floor(n * 10) / 10).toString();
+    if (n < 1000) return Math.floor(n).toString();
+    const units = ['K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx'];
+    let i = -1;
+    while (n >= 999.5 && i < units.length - 1) { n /= 1000; i++; }
+    return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n).toString()) + units[i];
+  };
+
+  // Light sources sit just outside the table's edge and shine across it.
+  const SOURCES = [
+    { x: -1, y: 4, dx: 1, dy: 0 },
+    { x: 3, y: -1, dx: 0, dy: 1 },
+    { x: COLS, y: 7, dx: -1, dy: 0 },
+  ];
+
+  // ---------------- state ----------------
+  const fresh = () => ({
+    lum: 8, total: 0, power: 0, sources: 1, bought: { prism: 0, mirror: 0, crystal: 0 },
+    // Pieces by "x,y": prism {t:'p', flip}, mirror {t:'m', d:0 '/' | 1 '\'}, crystal {t:'c', c:1..3, xp}.
+    grid: { '5,4': { t: 'c', c: 2, xp: 0 }, '1,1': { t: 'c', c: 1, xp: 0 }, '4,7': { t: 'c', c: 3, xp: 0 } },
+    last: Date.now(),
+  });
+  let S = fresh();
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) S = Object.assign(fresh(), JSON.parse(raw));
+  } catch (e) { /* storage unavailable: play without saving */ }
+  const save = () => { try { S.last = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+  // ---------------- rules ----------------
+  const sourcePower = () => Math.pow(1.6, S.power);
+  const crystalLevel = (xp) => Math.floor(Math.log2(1 + xp / 25));
+  const crystalMult = (xp) => 1 + 0.6 * crystalLevel(xp);
+  const SPLIT = 0.7; // each coloured beam out of a prism carries this share of the light (three of them: more in total)
+
+  /**
+   * Trace every beam across the table. Returns drawable segments and, per crystal, the light it
+   * receives (matching colour ×3, white light ×1, other colours nothing).
+   */
+  let trace = null;
+  const retrace = () => {
+    const segs = [], feed = {};
+    const seen = new Set();
+    const queue = [];
+    for (let i = 0; i < S.sources; i++) {
+      const s = SOURCES[i];
+      queue.push({ x: s.x, y: s.y, dx: s.dx, dy: s.dy, c: 0, p: sourcePower() });
+    }
+    while (queue.length) {
+      const b = queue.shift();
+      let x = b.x, y = b.y;
+      const sx = x, sy = y;
+      let end = null;
+      for (let guard = 0; guard < 40; guard++) {
+        x += b.dx; y += b.dy;
+        if (x < 0 || y < 0 || x >= COLS || y >= ROWS) { end = { x: x - b.dx * 0.5, y: y - b.dy * 0.5, out: true }; break; }
+        const k = `${x},${y}`, piece = S.grid[k];
+        if (!piece) continue;
+        const sk = `${k},${b.dx},${b.dy},${b.c}`;
+        if (seen.has(sk)) { end = { x, y }; break; }
+        seen.add(sk);
+        if (piece.t === 'c') {
+          const mult = b.c === 0 ? 1 : b.c === piece.c ? 3 : 0;
+          if (mult) feed[k] = (feed[k] || 0) + b.p * mult;
+          end = { x, y, crystal: k, wasted: !mult };
+          break;
+        }
+        if (piece.t === 'm') {
+          const ndx = piece.d === 0 ? -b.dy : b.dy, ndy = piece.d === 0 ? -b.dx : b.dx;
+          queue.push({ x, y, dx: ndx, dy: ndy, c: b.c, p: b.p });
+          end = { x, y };
+          break;
+        }
+        if (piece.t === 'p') {
+          if (b.c !== 0) continue; // coloured light passes straight through a prism
+          const left = { dx: b.dy, dy: -b.dx }, right = { dx: -b.dy, dy: b.dx };
+          const [a, z] = piece.flip ? [right, left] : [left, right];
+          queue.push({ x, y, dx: b.dx, dy: b.dy, c: 2, p: b.p * SPLIT });
+          queue.push({ x, y, dx: a.dx, dy: a.dy, c: 1, p: b.p * SPLIT });
+          queue.push({ x, y, dx: z.dx, dy: z.dy, c: 3, p: b.p * SPLIT });
+          end = { x, y };
+          break;
+        }
+      }
+      if (end) segs.push({ x1: sx, y1: sy, x2: end.x, y2: end.y, c: b.c, p: b.p, out: !!end.out, wasted: !!end.wasted });
+    }
+    trace = { segs, feed };
+  };
+  const crystalIncome = (k) => (trace.feed[k] || 0) * crystalMult(S.grid[k].xp);
+  const incomeRate = () => Object.keys(trace.feed).reduce((a, k) => a + crystalIncome(k), 0);
+
+  const emptyCells = () => {
+    const out = [];
+    for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) if (!S.grid[`${x},${y}`]) out.push([x, y]);
+    return out;
+  };
+
+  const SHOP = [
+    {
+      id: 'mirror', name: 'Mirror', icon: '<line x1="5" y1="21" x2="21" y2="5" stroke="#161616" stroke-width="3.5" stroke-linecap="round"/>',
+      what: () => 'Turns a beam 90°. Tap it to turn the other way',
+      cost: () => 6 * Math.pow(2.4, S.bought.mirror), can: () => emptyCells().length > 0, place: { t: 'm', d: 0 },
+    },
+    {
+      id: 'prism', name: 'Prism', icon: '<polygon points="13,3 23,21 3,21" fill="#161616"/>',
+      what: () => 'Splits white light into red, yellow and blue',
+      cost: () => 14 * Math.pow(4, S.bought.prism), can: () => emptyCells().length > 0, place: { t: 'p', flip: false },
+    },
+    {
+      id: 'power', name: 'Brighter', icon: '<rect x="2" y="9" width="8" height="8" fill="#161616"/><line x1="10" y1="13" x2="25" y2="13" stroke="#161616" stroke-width="4"/>',
+      what: () => 'Every light source shines 60% brighter',
+      cost: () => 18 * Math.pow(3.2, S.power), can: () => S.power < 25, level: () => `${S.power}`,
+      buy: () => { S.power++; return 'The light grows brighter'; },
+    },
+    {
+      id: 'crystal', name: 'Crystal', icon: '<polygon points="13,3 22,13 13,23 4,13" fill="#2457C5"/>',
+      what: () => 'A new crystal of a random colour',
+      cost: () => 40 * Math.pow(3.5, S.bought.crystal), can: () => emptyCells().length > 0,
+      buy: () => {
+        const cells = emptyCells().filter(([x, y]) => !SOURCES.some((s) => s.x + s.dx === x && s.y + s.dy === y));
+        const [x, y] = cells[Math.floor(Math.random() * cells.length)];
+        const c = 1 + Math.floor(Math.random() * 3);
+        S.grid[`${x},${y}`] = { t: 'c', c, xp: 0 };
+        S.bought.crystal++;
+        return `A ${['', 'red', 'yellow', 'blue'][c]} crystal appears`;
+      },
+    },
+    {
+      id: 'source', name: 'Light', icon: '<rect x="9" y="2" width="8" height="8" fill="#161616"/><line x1="13" y1="10" x2="13" y2="25" stroke="#161616" stroke-width="4"/>',
+      what: () => (S.sources === 1 ? 'A second source, shining down from the top' : 'A third source, from the right'),
+      cost: () => [0, 500, 12000][S.sources] ?? Infinity, can: () => S.sources < SOURCES.length, level: () => `${S.sources}/${SOURCES.length}`,
+      buy: () => {
+        const s = SOURCES[S.sources];
+        const k = `${s.x + s.dx},${s.y + s.dy}`;
+        if (S.grid[k] && S.grid[k].t === 'c') { delete S.grid[k]; } // keep the source's first square clear
+        S.sources++;
+        return 'A new light switches on';
+      },
+    },
+  ];
+
+  // ---------------- offline progress ----------------
+  retrace();
+  {
+    const away = Math.min(4 * 3600, Math.max(0, (Date.now() - (S.last || Date.now())) / 1000));
+    if (away > 30) {
+      const gain = incomeRate() * away * 0.5;
+      S.lum += gain; S.total += gain;
+      setTimeout(() => toast(`While you were away: +${fmt(gain)} lumens`), 400);
+    }
+  }
+
+  // ---------------- layout ----------------
+  const canvas = document.getElementById('table');
+  const ctx = canvas.getContext('2d');
+  let W = 0, H = 0, dpr = 1, cell = 40, ox = 0, oy = 0;
+  const resize = () => {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    const r = canvas.getBoundingClientRect();
+    W = r.width; H = r.height;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    // One extra cell all round for the light sources.
+    cell = Math.floor(Math.min(W / (COLS + 1.2), H / (ROWS + 1.2)));
+    ox = Math.round((W - cell * COLS) / 2);
+    oy = Math.round((H - cell * ROWS) / 2);
+  };
+  window.addEventListener('resize', resize);
+  const center = (x, y) => ({ x: ox + (x + 0.5) * cell, y: oy + (y + 0.5) * cell });
+
+  // ---------------- simulation ----------------
+  let t = 0;
+  const floaters = [], acc = {};
+  const step = (dt) => {
+    t += dt;
+    for (const k of Object.keys(trace.feed)) {
+      const piece = S.grid[k];
+      if (!piece) continue;
+      const v = crystalIncome(k) * dt;
+      const before = crystalLevel(piece.xp);
+      piece.xp += trace.feed[k] * dt;
+      S.lum += v; S.total += v;
+      acc[k] = (acc[k] || 0) + v;
+      if (crystalLevel(piece.xp) > before) toast(`A ${['', 'red', 'yellow', 'blue'][piece.c]} crystal grows`);
+    }
+    // Show what each lit crystal earned, about once a second.
+    if (Math.floor(t * 0.9) !== Math.floor((t - dt) * 0.9)) {
+      for (const k of Object.keys(acc)) {
+        if (acc[k] <= 0 || !S.grid[k]) continue;
+        const [x, y] = k.split(',').map(Number);
+        const p = center(x, y);
+        floaters.push({ x: p.x, y: p.y - cell * 0.45, text: `+${fmt(acc[k])}`, t: 0, color: BEAM[S.grid[k].c] });
+        acc[k] = 0;
+      }
+    }
+    for (const f of floaters) f.t += dt;
+    while (floaters.length && floaters[0].t > 1.3) floaters.shift();
+  };
+
+  // ---------------- drawing ----------------
+  const beamWidth = (p) => Math.max(2, Math.min(cell * 0.24, 2 + 1.6 * Math.log2(1 + p)));
+  const drawCrystal = (x, y, piece, lit) => {
+    const p = center(x, y);
+    const lv = crystalLevel(piece.xp);
+    const s = cell * Math.min(0.42, 0.2 + 0.035 * lv);
+    if (lit) {
+      ctx.globalAlpha = 0.18 + 0.1 * Math.sin(t * 5 + x + y);
+      ctx.fillStyle = BEAM[piece.c];
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, s * 1.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = BEAM[piece.c];
+    ctx.beginPath();
+    if (piece.c === 1) { ctx.moveTo(p.x, p.y - s * 1.1); ctx.lineTo(p.x + s, p.y + s * 0.75); ctx.lineTo(p.x - s, p.y + s * 0.75); ctx.closePath(); }
+    else if (piece.c === 2) ctx.arc(p.x, p.y, s * 0.92, 0, Math.PI * 2);
+    else ctx.rect(p.x - s * 0.82, p.y - s * 0.82, s * 1.64, s * 1.64);
+    ctx.fill();
+    if (lv > 0) {
+      ctx.fillStyle = piece.c === 2 ? C.ink : C.paper;
+      ctx.font = `600 ${Math.round(cell * 0.24)}px Jost, Futura, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(lv), p.x, p.y + (piece.c === 1 ? s * 0.2 : 0));
+      ctx.textBaseline = 'alphabetic';
+    }
+  };
+
+  const draw = () => {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = C.paper;
+    ctx.fillRect(0, 0, W, H);
+
+    // The table: faint squares, with empty ones highlighted while placing.
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const empty = !S.grid[`${x},${y}`];
+        ctx.fillStyle = placing && empty ? '#EFEDE6' : '#F3F2ED';
+        const g = Math.max(2, cell * 0.06);
+        ctx.fillRect(ox + x * cell + g / 2, oy + y * cell + g / 2, cell - g, cell - g);
+      }
+    }
+
+    // Beams, then light flowing along them.
+    for (const pass of [0, 1]) {
+      for (const s of trace.segs) {
+        const a = center(s.x1, s.y1), b = center(s.x2, s.y2);
+        ctx.strokeStyle = pass ? C.paper : BEAM[s.c];
+        ctx.lineCap = 'butt';
+        ctx.lineWidth = pass ? Math.max(1, beamWidth(s.p) * 0.35) : beamWidth(s.p);
+        ctx.globalAlpha = pass ? 0.75 : s.wasted ? 0.45 : 1;
+        if (pass) { ctx.setLineDash([2, 12]); ctx.lineDashOffset = -t * 60; }
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // Light sources.
+    for (let i = 0; i < S.sources; i++) {
+      const s = SOURCES[i], p = center(s.x, s.y);
+      const k = cell * 0.36;
+      ctx.fillStyle = C.ink;
+      ctx.fillRect(p.x - k / 2 + s.dx * cell * 0.2, p.y - k / 2 + s.dy * cell * 0.2, k, k);
+    }
+
+    // Pieces.
+    for (const key of Object.keys(S.grid)) {
+      const [x, y] = key.split(',').map(Number), piece = S.grid[key], p = center(x, y);
+      if (piece.t === 'c') { drawCrystal(x, y, piece, !!trace.feed[key]); continue; }
+      if (piece.t === 'm') {
+        const h = cell * 0.36;
+        ctx.strokeStyle = C.ink;
+        ctx.lineWidth = Math.max(3, cell * 0.1);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        if (piece.d === 0) { ctx.moveTo(p.x - h, p.y + h); ctx.lineTo(p.x + h, p.y - h); }
+        else { ctx.moveTo(p.x - h, p.y - h); ctx.lineTo(p.x + h, p.y + h); }
+        ctx.stroke();
+        continue;
+      }
+      if (piece.t === 'p') {
+        const h = cell * 0.34;
+        ctx.fillStyle = C.ink;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y - h); ctx.lineTo(p.x + h, p.y + h * 0.8); ctx.lineTo(p.x - h, p.y + h * 0.8);
+        ctx.closePath();
+        ctx.fill();
+        // A small tick shows which side red comes out (tap Flip to swap).
+        ctx.fillStyle = piece.flip ? C.blue : C.red;
+        ctx.fillRect(p.x - h * 0.18, p.y + h * 0.15, h * 0.36, h * 0.36);
+      }
+    }
+
+    if (selected) {
+      const [x, y] = selected.split(',').map(Number);
+      ctx.strokeStyle = C.ink;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(ox + x * cell + 2, oy + y * cell + 2, cell - 4, cell - 4);
+      ctx.setLineDash([]);
+    }
+
+    ctx.textAlign = 'center';
+    for (const f of floaters) {
+      const k = f.t / 1.3;
+      ctx.globalAlpha = Math.min(1, (1 - k) * 2);
+      ctx.fillStyle = f.color === C.yellow ? '#C48B0C' : f.color;
+      ctx.font = `500 ${Math.max(11, Math.round(cell * 0.28))}px Jost, Futura, sans-serif`;
+      ctx.fillText(f.text, f.x, f.y - k * 22);
+    }
+    ctx.globalAlpha = 1;
+  };
+
+  // ---------------- placing, selecting ----------------
+  let placing = null; // { id, piece, cost } while a bought piece waits for a square
+  let selected = null; // "x,y" of a piece whose menu is open
+  const hint = document.getElementById('hint');
+  const menu = document.getElementById('menu');
+  const setHint = () => {
+    if (placing) {
+      hint.innerHTML = `Tap an empty square to place your <b>${placing.name.toLowerCase()}</b>`;
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'ghost'; b.textContent = 'Cancel';
+      b.addEventListener('click', () => {
+        // Cancelling a purchase refunds it; cancelling a move puts the piece back.
+        if (placing.from) S.grid[placing.from] = placing.piece;
+        else S.lum += placing.cost;
+        placing = null;
+        retrace(); setHint(); refresh();
+      });
+      hint.appendChild(b);
+    } else if (incomeRate() === 0) {
+      hint.textContent = 'Light earns nothing until it reaches a crystal';
+    } else {
+      hint.textContent = 'Tap a piece to turn, flip, move or sell it';
+    }
+  };
+  const closeMenu = () => { menu.hidden = true; selected = null; };
+  const openMenu = (key) => {
+    const piece = S.grid[key];
+    selected = key;
+    menu.replaceChildren();
+    const add = (label, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = label;
+      b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+      menu.appendChild(b);
+    };
+    if (piece.t === 'm') add('Turn', () => { piece.d ^= 1; retrace(); save(); });
+    if (piece.t === 'p') add('Flip', () => { piece.flip = !piece.flip; retrace(); save(); });
+    add('Move', () => {
+      placing = { id: 'move', name: piece.t === 'm' ? 'Mirror' : piece.t === 'p' ? 'Prism' : 'Crystal', piece, cost: 0, from: key };
+      delete S.grid[key];
+      retrace(); closeMenu(); setHint();
+    });
+    if (piece.t !== 'c') {
+      const item = SHOP.find((s) => s.place && s.place.t === piece.t);
+      add('Sell', () => {
+        S.bought[item.id] = Math.max(0, S.bought[item.id] - 1);
+        S.lum += item.cost() * 0.5;
+        delete S.grid[key];
+        retrace(); closeMenu(); refresh(); save();
+      });
+    }
+    const [x, y] = key.split(',').map(Number);
+    const r = canvas.getBoundingClientRect(), p = center(x, y);
+    menu.style.left = `${Math.min(window.innerWidth - 90, Math.max(90, r.left + p.x))}px`;
+    menu.style.top = `${r.top + p.y - cell * 0.55}px`;
+    menu.hidden = false;
+  };
+
+  canvas.addEventListener('click', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = Math.floor((e.clientX - r.left - ox) / cell), y = Math.floor((e.clientY - r.top - oy) / cell);
+    const inside = x >= 0 && y >= 0 && x < COLS && y < ROWS;
+    const key = `${x},${y}`;
+    if (placing) {
+      if (!inside || S.grid[key]) return;
+      S.grid[key] = placing.piece;
+      if (placing.id !== 'move') S.bought[placing.id]++;
+      placing = null;
+      retrace(); setHint(); refresh(); save();
+      return;
+    }
+    if (inside && S.grid[key]) {
+      if (selected === key) {
+        // A second tap on a mirror or prism turns it straight away.
+        const piece = S.grid[key];
+        if (piece.t === 'm') { piece.d ^= 1; retrace(); save(); return; }
+        if (piece.t === 'p') { piece.flip = !piece.flip; retrace(); save(); return; }
+      }
+      openMenu(key);
+    } else closeMenu();
+  });
+
+  // ---------------- shop ----------------
+  const shop = document.getElementById('shop');
+  const cards = SHOP.map((it) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'item';
+    b.id = `buy-${it.id}`;
+    b.innerHTML = `<svg viewBox="0 0 26 26" aria-hidden="true">${it.icon}</svg>
+      <span class="name">${it.name}<span class="lv"></span></span>
+      <span class="what"></span><span class="cost"></span>`;
+    b.addEventListener('click', () => {
+      const c = it.cost();
+      if (!it.can() || S.lum < c || placing) return;
+      S.lum -= c;
+      closeMenu();
+      if (it.place) {
+        placing = { id: it.id, name: it.name, piece: { ...it.place }, cost: c };
+        setHint();
+      } else {
+        toast(it.buy());
+        retrace();
+        save();
+      }
+      refresh();
+    });
+    shop.appendChild(b);
+    return { it, b, lv: b.querySelector('.lv'), what: b.querySelector('.what'), cost: b.querySelector('.cost') };
+  });
+
+  const lumEl = document.getElementById('lum'), rateEl = document.getElementById('rate');
+  const refresh = () => {
+    lumEl.textContent = fmt(S.lum);
+    rateEl.textContent = `+${fmt(incomeRate())}/s`;
+    for (const c of cards) {
+      const can = c.it.can(), cost = c.it.cost();
+      c.lv.textContent = c.it.level ? c.it.level() : String(S.bought[c.it.id] ?? '');
+      c.what.textContent = c.it.what();
+      c.cost.textContent = can ? `${fmt(cost)} lm` : 'Complete';
+      c.b.classList.toggle('done', !can);
+      c.b.classList.toggle('poor', can && (S.lum < cost || !!placing));
+      c.b.classList.toggle('ready', can && S.lum >= cost && !placing);
+      c.b.setAttribute('aria-disabled', String(!can || S.lum < cost || !!placing));
+    }
+    if (!placing) setHint();
+  };
+
+  // ---------------- toast & reset ----------------
+  const toastEl = document.getElementById('toast');
+  let toastTimer = 0;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2000);
+  }
+  const resetBtn = document.getElementById('reset');
+  let armed = 0;
+  resetBtn.addEventListener('click', () => {
+    if (!armed) {
+      armed = setTimeout(() => { armed = 0; resetBtn.classList.remove('armed'); resetBtn.textContent = 'New table'; }, 2500);
+      resetBtn.classList.add('armed');
+      resetBtn.textContent = 'Tap again to reset';
+      return;
+    }
+    clearTimeout(armed); armed = 0;
+    S = fresh(); placing = null; closeMenu(); retrace(); save(); refresh();
+    resetBtn.classList.remove('armed'); resetBtn.textContent = 'New table';
+    toast('A fresh table');
+  });
+
+  // ---------------- loop ----------------
+  resize();
+  refresh();
+  let last = performance.now(), uiTimer = 0, saveTimer = 0;
+  const frame = (now) => {
+    requestAnimationFrame(frame);
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    uiTimer += dt; saveTimer += dt;
+    if (uiTimer > 0.25) { uiTimer = 0; refresh(); }
+    if (saveTimer > 5) { saveTimer = 0; save(); }
+  };
+  requestAnimationFrame(frame);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) save(); else last = performance.now(); });
+  window.addEventListener('pagehide', save);
+})();
+</script>

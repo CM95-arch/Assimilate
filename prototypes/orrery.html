@@ -1,0 +1,558 @@
+<title>Orrery</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600&display=swap">
+<style>
+  /* Layout: a full-screen sky with the orrery centred, a quiet readout on top, a strip of purchases at the bottom. */
+  :root {
+    --sky: #FAFAF7;
+    --ink: #161616;
+    --mute: #8B8984;
+    --line: #E3E1DB;
+    --card: #FFFFFF;
+    --red: #E0412E;
+    --yellow: #F1B42C;
+    --blue: #2457C5;
+    --display: "Jost", "Futura", "Century Gothic", "Trebuchet MS", sans-serif;
+    color-scheme: light;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--sky); color: var(--ink); font-family: var(--display);
+    overflow: hidden; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  header {
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 14px);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .label { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute); font-weight: 500; }
+  #dust { font-size: 40px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  #rate { font-size: 14px; color: var(--mute); font-variant-numeric: tabular-nums; margin-top: 4px; }
+  #reset {
+    font: inherit; font-size: 12px; color: var(--mute); background: none; border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; min-height: 32px;
+  }
+  #reset.armed { color: var(--red); border-color: var(--red); }
+  canvas { flex: 1; min-height: 0; width: 100%; display: block; touch-action: manipulation; }
+  #shop {
+    display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
+    padding-top: 6px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  #shop::-webkit-scrollbar { display: none; }
+  .item {
+    flex: 0 0 auto; width: 124px; text-align: left; font: inherit; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 10px 10px 9px; display: flex; flex-direction: column; gap: 4px; cursor: pointer;
+    transition: transform 0.08s ease, opacity 0.2s ease, border-color 0.2s ease;
+  }
+  .item:active { transform: scale(0.97); }
+  .item:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .item svg { width: 26px; height: 26px; }
+  .item .name { font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
+  .item .lv { font-size: 11px; color: var(--mute); font-weight: 500; }
+  .item .what { font-size: 12px; color: var(--mute); line-height: 1.25; min-height: 30px; }
+  .item .cost { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .item.poor { opacity: 0.45; }
+  .item.ready { border-color: var(--ink); }
+  .item.done { opacity: 0.35; cursor: default; }
+  #toast {
+    position: fixed; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 92px);
+    background: var(--ink); color: var(--sky); font-size: 14px; padding: 9px 16px; border-radius: 999px;
+    opacity: 0; transition: opacity 0.3s ease; pointer-events: none; white-space: nowrap; max-width: calc(100vw - 32px);
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  #toast.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .item, #toast { transition: none; } }
+</style>
+
+<div id="app">
+  <header>
+    <div>
+      <div class="label">Stardust</div>
+      <div id="dust">0</div>
+      <div id="rate">+0/s</div>
+    </div>
+    <button id="reset" type="button">New system</button>
+  </header>
+  <canvas id="sky" aria-label="Your orrery: a black sun with planets in orbit"></canvas>
+  <nav id="shop" aria-label="Buy"></nav>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  const C = { red: '#E0412E', yellow: '#F1B42C', blue: '#2457C5', ink: '#161616', mute: '#8B8984', line: '#E3E1DB', sky: '#FAFAF7' };
+  const PLANET_COLORS = [C.red, C.yellow, C.blue];
+  const MAX_PLANETS = 8, MAX_MOONS = 3, MAX_COMETS = 3, MAX_BELT = 12, MAX_GRAVITY = 20;
+  const KEY = 'orrery.save.v1';
+
+  // ---------------- numbers ----------------
+  const fmt = (n) => {
+    if (n < 10) return (Math.floor(n * 10) / 10).toString();
+    if (n < 1000) return Math.floor(n).toString();
+    const units = ['K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx'];
+    let i = -1;
+    while (n >= 999.5 && i < units.length - 1) { n /= 1000; i++; }
+    return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n).toString()) + units[i];
+  };
+
+  // ---------------- state ----------------
+  const fresh = () => ({ dust: 12, total: 0, planets: [{ moons: 0, ring: false }], comets: 0, belt: 0, gravity: 0, last: Date.now() });
+  let S = fresh();
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) S = Object.assign(fresh(), JSON.parse(raw));
+  } catch (e) { /* storage unavailable: play without saving */ }
+  const save = () => { try { S.last = Date.now(); localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+  // ---------------- rules ----------------
+  const radiusFrac = (i) => 0.2 + 0.1 * i;
+  const speedMult = () => 1 + 0.15 * S.gravity;
+  const period = (i) => 3.2 * Math.pow(radiusFrac(i) / radiusFrac(0), 1.5) / speedMult();
+  const planetValue = (i) => {
+    const p = S.planets[i];
+    return 1.5 * Math.pow(3.2, i) * (1 + 0.6 * p.moons) * (p.ring ? 2 : 1);
+  };
+  const cometPeriod = () => 16 / speedMult();
+  const cometValue = (j) => 60 * Math.pow(7, j) * (1 + 0.5 * S.planets.length);
+  const beltRate = () => (S.belt ? 0.6 * S.belt * Math.pow(1.9, S.belt) : 0);
+  const incomeRate = () => {
+    let r = beltRate();
+    for (let i = 0; i < S.planets.length; i++) r += planetValue(i) / period(i);
+    for (let j = 0; j < S.comets; j++) r += cometValue(j) / cometPeriod();
+    return r;
+  };
+
+  const totalMoons = () => S.planets.reduce((a, p) => a + p.moons, 0);
+  const totalRings = () => S.planets.filter((p) => p.ring).length;
+  const moonTarget = () => {
+    let best = -1;
+    S.planets.forEach((p, i) => { if (p.moons < MAX_MOONS && (best < 0 || p.moons < S.planets[best].moons)) best = i; });
+    return best;
+  };
+  const ringTarget = () => {
+    let best = -1;
+    S.planets.forEach((p, i) => { if (!p.ring) best = i; }); // the most valuable planet without one
+    return best;
+  };
+
+  const SHOP = [
+    {
+      id: 'planet', name: 'Planet', icon: '<circle cx="13" cy="13" r="8" fill="#E0412E"/>',
+      what: () => 'A new world on the next orbit out',
+      cost: () => 12 * Math.pow(5.5, S.planets.length - 1),
+      level: () => `${S.planets.length}/${MAX_PLANETS}`, can: () => S.planets.length < MAX_PLANETS,
+      buy: () => { S.planets.push({ moons: 0, ring: false }); return 'A new planet enters orbit'; },
+    },
+    {
+      id: 'moon', name: 'Moon', icon: '<circle cx="11" cy="14" r="7" fill="#2457C5"/><circle cx="21" cy="6" r="3" fill="#161616"/>',
+      what: () => 'Circles a planet: +60% to its orbits',
+      cost: () => 8 * Math.pow(2.4, totalMoons()),
+      level: () => `${totalMoons()}`, can: () => moonTarget() >= 0,
+      buy: () => { S.planets[moonTarget()].moons++; return 'A moon is captured'; },
+    },
+    {
+      id: 'ring', name: 'Ring', icon: '<circle cx="13" cy="13" r="6" fill="#F1B42C"/><ellipse cx="13" cy="13" rx="12" ry="4" fill="none" stroke="#161616" stroke-width="2"/>',
+      what: () => 'Doubles a planet’s orbits',
+      cost: () => 30 * Math.pow(4, totalRings()),
+      level: () => `${totalRings()}`, can: () => ringTarget() >= 0,
+      buy: () => { S.planets[ringTarget()].ring = true; return 'Rings form around a planet'; },
+    },
+    {
+      id: 'gravity', name: 'Gravity', icon: '<circle cx="13" cy="13" r="5" fill="#161616"/><circle cx="13" cy="13" r="10" fill="none" stroke="#161616" stroke-width="1.5" stroke-dasharray="3 3"/>',
+      what: () => 'Everything orbits 15% faster',
+      cost: () => 25 * Math.pow(2.2, S.gravity),
+      level: () => `${S.gravity}`, can: () => S.gravity < MAX_GRAVITY,
+      buy: () => { S.gravity++; return 'The sun grows heavier'; },
+    },
+    {
+      id: 'belt', name: 'Belt', icon: '<rect x="3" y="11" width="4" height="4" fill="#8B8984"/><rect x="11" y="6" width="3" height="3" fill="#161616"/><rect x="18" y="13" width="4" height="4" fill="#8B8984"/><rect x="12" y="18" width="3" height="3" fill="#E0412E"/>',
+      what: () => 'Asteroids that pay a steady trickle',
+      cost: () => 60 * Math.pow(3, S.belt),
+      level: () => `${S.belt}`, can: () => S.belt < MAX_BELT && S.planets.length >= 3,
+      lock: () => (S.planets.length < 3 ? 'Needs 3 planets' : ''),
+      buy: () => { S.belt++; return S.belt === 1 ? 'An asteroid belt forms' : 'The belt thickens'; },
+    },
+    {
+      id: 'comet', name: 'Comet', icon: '<circle cx="19" cy="7" r="4" fill="#161616"/><circle cx="13" cy="13" r="2.5" fill="#161616" opacity=".5"/><circle cx="8" cy="18" r="1.8" fill="#161616" opacity=".3"/>',
+      what: () => 'A long loop; pays big when it swings past the sun',
+      cost: () => 150 * Math.pow(9, S.comets),
+      level: () => `${S.comets}/${MAX_COMETS}`, can: () => S.comets < MAX_COMETS && S.planets.length >= 2,
+      lock: () => (S.planets.length < 2 ? 'Needs 2 planets' : ''),
+      buy: () => { S.comets++; return 'A comet falls toward the sun'; },
+    },
+  ];
+
+  // ---------------- motion (not saved) ----------------
+  const angle = [], spun = [];
+  const ensurePlanets = () => {
+    for (let i = angle.length; i < S.planets.length; i++) {
+      angle[i] = Math.random() * Math.PI * 2;
+      spun[i] = 0;
+    }
+  };
+  ensurePlanets();
+  const cometTheta = [Math.PI * 0.8, Math.PI * 1.4, Math.PI * 0.2];
+  let beltSpin = 0, t = 0;
+  const prevDiff = new Map();
+  const groupCooldown = new Map();
+  const floaters = [], pulses = [], alignFx = [];
+
+  // ---------------- offline progress ----------------
+  {
+    const away = Math.min(4 * 3600, Math.max(0, (Date.now() - (S.last || Date.now())) / 1000));
+    if (away > 30) {
+      const gain = incomeRate() * away * 0.5;
+      S.dust += gain; S.total += gain;
+      setTimeout(() => toast(`While you were away: +${fmt(gain)} stardust`), 400);
+    }
+  }
+
+  // ---------------- layout ----------------
+  const canvas = document.getElementById('sky');
+  const ctx = canvas.getContext('2d');
+  let W = 0, H = 0, dpr = 1, cx = 0, cy = 0, R = 100, half = 100, zoom = 0;
+  const resize = () => {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    const r = canvas.getBoundingClientRect();
+    W = r.width; H = r.height;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    cx = W / 2; cy = H / 2;
+    half = Math.max(60, Math.min(W, H) / 2 - 10);
+  };
+  // The view starts close in and widens as the system grows, so the outermost body stays near the edge.
+  const zoomTarget = () => {
+    let outer = radiusFrac(S.planets.length - 1) + 0.07;
+    if (S.belt) outer = Math.max(outer, radiusFrac(3) + 0.07);
+    for (let j = 0; j < S.comets; j++) { const o = cometOrbit(j, 1); outer = Math.max(outer, o.a * (1 + o.e) + 0.04); }
+    return 0.95 / Math.max(0.42, outer);
+  };
+  window.addEventListener('resize', resize);
+
+  const planetPos = (i) => {
+    const r = radiusFrac(i) * R;
+    return { x: cx + Math.cos(angle[i]) * r, y: cy + Math.sin(angle[i]) * r };
+  };
+  const planetSize = (i) => R * (0.03 + 0.004 * i);
+
+  // Comets: ellipses with the sun at one focus, each tilted differently.
+  const COMET_TILT = [0.6, 2.4, 4.2];
+  const cometOrbit = (j, unit = R) => ({ a: unit * (0.44 + 0.05 * j), e: 0.78 - 0.04 * j, tilt: COMET_TILT[j] });
+  const cometR = (o, th) => (o.a * (1 - o.e * o.e)) / (1 + o.e * Math.cos(th));
+  const cometPos = (j, th = cometTheta[j]) => {
+    const o = cometOrbit(j), r = cometR(o, th), a = th + o.tilt;
+    return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
+  };
+
+  // ---------------- simulation ----------------
+  const earn = (v, x, y, color, big) => {
+    S.dust += v; S.total += v;
+    floaters.push({ x, y, text: `+${fmt(v)}`, t: 0, color: color || C.ink, big: !!big });
+  };
+  const wrap = (a) => { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; };
+
+  const step = (dt) => {
+    t += dt;
+    const zt = zoomTarget();
+    zoom = zoom ? zoom + (zt - zoom) * (1 - Math.exp(-dt * 1.5)) : zt;
+    R = half * zoom;
+    ensurePlanets();
+    const n = S.planets.length;
+    for (let i = 0; i < n; i++) {
+      const d = (Math.PI * 2 / period(i)) * dt;
+      angle[i] = (angle[i] + d) % (Math.PI * 2);
+      spun[i] += d;
+      if (spun[i] >= Math.PI * 2) {
+        spun[i] -= Math.PI * 2;
+        const p = planetPos(i);
+        earn(planetValue(i), p.x, p.y - planetSize(i) - 6, PLANET_COLORS[i % 3]);
+        pulses.push({ x: p.x, y: p.y, r: planetSize(i), t: 0, color: PLANET_COLORS[i % 3] });
+      }
+    }
+    // Alignments: two planets crossing the same line from the sun. Others close by join in.
+    const fired = new Set();
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const key = i * 16 + j;
+        const d = wrap(angle[i] - angle[j]);
+        const prev = prevDiff.get(key);
+        prevDiff.set(key, d);
+        if (prev === undefined || Math.sign(prev) === Math.sign(d) || Math.abs(d) > 1 || Math.abs(prev) > 1) continue;
+        const group = [];
+        for (let k = 0; k < n; k++) if (Math.abs(wrap(angle[k] - angle[i])) < 0.16) group.push(k);
+        const gk = group.join(',');
+        if (fired.has(gk) || (groupCooldown.get(gk) || 0) > t) continue;
+        fired.add(gk);
+        groupCooldown.set(gk, t + 1);
+        alignment(group, angle[i]);
+      }
+    }
+    // Comets move fast near the sun and slowly far out (equal areas in equal times, roughly).
+    for (let j = 0; j < S.comets; j++) {
+      const o = cometOrbit(j), r = cometR(o, cometTheta[j]);
+      const h = (Math.PI * 2 * o.a * o.a * Math.sqrt(1 - o.e * o.e)) / cometPeriod();
+      const before = cometTheta[j];
+      cometTheta[j] += (h / (r * r)) * dt;
+      if (cometTheta[j] >= Math.PI * 2) cometTheta[j] -= Math.PI * 2;
+      if (before > Math.PI && cometTheta[j] < Math.PI) {
+        const p = cometPos(j);
+        earn(cometValue(j), p.x, p.y - 14, C.ink, true);
+        pulses.push({ x: cx, y: cy, r: R * 0.08, t: 0, color: C.ink, big: true });
+      }
+    }
+    if (S.belt) {
+      beltSpin += dt * 0.08 * speedMult();
+      S.dust += beltRate() * dt; S.total += beltRate() * dt;
+    }
+    for (const f of floaters) f.t += dt;
+    for (const p of pulses) p.t += dt;
+    for (const a of alignFx) a.t += dt;
+    while (floaters.length && floaters[0].t > 1.4) floaters.shift();
+    while (pulses.length && pulses[0].t > 0.9) pulses.shift();
+    while (alignFx.length && alignFx[0].t > 1.6) alignFx.shift();
+  };
+
+  const NAMES = ['', '', 'Alignment', 'Triple alignment', 'Grand alignment'];
+  const alignment = (group, a) => {
+    const size = group.length;
+    const sum = group.reduce((s, k) => s + planetValue(k), 0);
+    const mult = size === 2 ? 0.75 : size === 3 ? 3 : 8 * (size - 3);
+    const far = Math.max(...group.map((k) => radiusFrac(k))) * R;
+    const x = cx + Math.cos(a) * (far + 22), y = cy + Math.sin(a) * (far + 22);
+    earn(sum * mult, x, y, C.ink, size >= 3);
+    alignFx.push({ a, len: far + 14, t: 0, strong: size >= 3, label: NAMES[Math.min(size, 4)], x, y });
+    if (size >= 3) toast(`${NAMES[Math.min(size, 4)]}! +${fmt(sum * mult)}`);
+  };
+
+  // ---------------- drawing ----------------
+  const draw = () => {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = C.sky;
+    ctx.fillRect(0, 0, W, H);
+    const n = S.planets.length;
+
+    // Orbits.
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = C.line;
+    for (let i = 0; i < n; i++) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, radiusFrac(i) * R, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // Comet paths, faint and dashed.
+    ctx.setLineDash([2, 6]);
+    for (let j = 0; j < S.comets; j++) {
+      ctx.beginPath();
+      for (let k = 0; k <= 96; k++) {
+        const p = cometPos(j, (k / 96) * Math.PI * 2);
+        k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Alignment lines.
+    for (const f of alignFx) {
+      const k = 1 - f.t / 1.6;
+      ctx.strokeStyle = C.ink;
+      ctx.globalAlpha = Math.max(0, k) * (f.strong ? 0.9 : 0.35);
+      ctx.lineWidth = f.strong ? 3 : 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(f.a) * f.len, cy + Math.sin(f.a) * f.len);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Asteroid belt: between the third and fourth orbits.
+    if (S.belt) {
+      const rocks = 16 + S.belt * 14;
+      const br = (radiusFrac(2) + radiusFrac(3)) / 2 * R;
+      for (let k = 0; k < rocks; k++) {
+        const h1 = Math.sin(k * 12.9898) * 43758.5453, h2 = Math.sin(k * 78.233) * 12543.123;
+        const j1 = h1 - Math.floor(h1), j2 = h2 - Math.floor(h2);
+        const a = (k / rocks) * Math.PI * 2 + beltSpin * (0.8 + 0.4 * j1);
+        const r = br + (j2 - 0.5) * R * 0.06;
+        const s = 1.6 + j1 * 2.4;
+        ctx.fillStyle = k % 11 === 0 ? C.red : k % 7 === 0 ? C.ink : C.mute;
+        ctx.save();
+        ctx.translate(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+        ctx.rotate(a * 3 + k);
+        ctx.fillRect(-s / 2, -s / 2, s, s);
+        ctx.restore();
+      }
+    }
+
+    // Sun.
+    const sunR = R * 0.085;
+    ctx.fillStyle = C.ink;
+    ctx.beginPath();
+    ctx.arc(cx, cy, sunR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Planets, rings, moons.
+    for (let i = 0; i < n; i++) {
+      const p = planetPos(i), s = planetSize(i), col = PLANET_COLORS[i % 3], pl = S.planets[i];
+      if (pl.ring) {
+        ctx.strokeStyle = C.ink;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.ellipse(p.x, p.y, s * 2.1, s * 0.7, -0.4, Math.PI, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, s, 0, Math.PI * 2);
+      ctx.fill();
+      if (pl.ring) {
+        ctx.beginPath();
+        ctx.ellipse(p.x, p.y, s * 2.1, s * 0.7, -0.4, 0, Math.PI);
+        ctx.stroke();
+      }
+      for (let m = 0; m < pl.moons; m++) {
+        const mr = s * 1.9 + m * s * 0.75 + (pl.ring ? s * 0.5 : 0);
+        const ma = t * (2.6 - m * 0.5) * speedMult() + m * 2.1 + i;
+        ctx.fillStyle = C.ink;
+        ctx.beginPath();
+        ctx.arc(p.x + Math.cos(ma) * mr, p.y + Math.sin(ma) * mr, Math.max(1.6, s * 0.28), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Comets with tails pointing away from the sun.
+    for (let j = 0; j < S.comets; j++) {
+      const p = cometPos(j);
+      const dx = p.x - cx, dy = p.y - cy, d = Math.hypot(dx, dy) || 1;
+      const tail = Math.min(70, 3200 / d);
+      for (let k = 6; k >= 1; k--) {
+        ctx.globalAlpha = 0.5 * (1 - k / 7);
+        ctx.fillStyle = C.ink;
+        ctx.beginPath();
+        ctx.arc(p.x + (dx / d) * tail * (k / 6), p.y + (dy / d) * tail * (k / 6), 3.2 * (1 - k / 9), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Payout pulses and floating numbers.
+    for (const p of pulses) {
+      const k = p.t / 0.9;
+      ctx.strokeStyle = p.color;
+      ctx.globalAlpha = (1 - k) * 0.8;
+      ctx.lineWidth = p.big ? 3 : 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r + k * (p.big ? R * 0.25 : 16), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'center';
+    for (const f of floaters) {
+      const k = f.t / 1.4;
+      ctx.globalAlpha = Math.min(1, (1 - k) * 2);
+      ctx.fillStyle = f.color === C.yellow ? '#C48B0C' : f.color;
+      ctx.font = `${f.big ? 600 : 500} ${f.big ? 20 : 13}px Jost, Futura, sans-serif`;
+      ctx.fillText(f.text, f.x, f.y - k * 26);
+    }
+    for (const f of alignFx) {
+      if (!f.strong) continue;
+      ctx.globalAlpha = Math.max(0, 1 - f.t / 1.6);
+      ctx.fillStyle = C.ink;
+      ctx.font = '600 13px Jost, Futura, sans-serif';
+      ctx.fillText(f.label.toUpperCase(), f.x, f.y - 30);
+    }
+    ctx.globalAlpha = 1;
+  };
+
+  // ---------------- shop ----------------
+  const shop = document.getElementById('shop');
+  const cards = SHOP.map((it) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'item';
+    b.id = `buy-${it.id}`;
+    b.innerHTML = `<svg viewBox="0 0 26 26" aria-hidden="true">${it.icon}</svg>
+      <span class="name">${it.name}<span class="lv"></span></span>
+      <span class="what"></span><span class="cost"></span>`;
+    b.addEventListener('click', () => {
+      const c = it.cost();
+      if (!it.can() || S.dust < c) return;
+      S.dust -= c;
+      const msg = it.buy();
+      ensurePlanets();
+      toast(msg);
+      refresh();
+      save();
+    });
+    shop.appendChild(b);
+    return { it, b, lv: b.querySelector('.lv'), what: b.querySelector('.what'), cost: b.querySelector('.cost') };
+  });
+
+  const dustEl = document.getElementById('dust'), rateEl = document.getElementById('rate');
+  const refresh = () => {
+    dustEl.textContent = fmt(S.dust);
+    rateEl.textContent = `+${fmt(incomeRate())}/s`;
+    for (const c of cards) {
+      const can = c.it.can(), cost = c.it.cost(), lock = c.it.lock ? c.it.lock() : '';
+      c.lv.textContent = c.it.level();
+      c.what.textContent = lock || c.it.what();
+      c.cost.textContent = can ? `${fmt(cost)} ✦` : lock ? 'Locked' : 'Complete';
+      c.b.classList.toggle('done', !can);
+      c.b.classList.toggle('poor', can && S.dust < cost);
+      c.b.classList.toggle('ready', can && S.dust >= cost);
+      c.b.setAttribute('aria-disabled', String(!can || S.dust < cost));
+    }
+  };
+
+  // ---------------- toast & reset ----------------
+  const toastEl = document.getElementById('toast');
+  let toastTimer = 0;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2000);
+  }
+  const resetBtn = document.getElementById('reset');
+  let armed = 0;
+  resetBtn.addEventListener('click', () => {
+    if (!armed) {
+      armed = setTimeout(() => { armed = 0; resetBtn.classList.remove('armed'); resetBtn.textContent = 'New system'; }, 2500);
+      resetBtn.classList.add('armed');
+      resetBtn.textContent = 'Tap again to reset';
+      return;
+    }
+    clearTimeout(armed); armed = 0;
+    S = fresh(); angle.length = 0; spun.length = 0; prevDiff.clear(); groupCooldown.clear();
+    ensurePlanets(); save(); refresh();
+    resetBtn.classList.remove('armed'); resetBtn.textContent = 'New system';
+    toast('A new system begins');
+  });
+
+  // ---------------- loop ----------------
+  resize();
+  refresh();
+  let last = performance.now(), uiTimer = 0, saveTimer = 0;
+  const frame = (now) => {
+    requestAnimationFrame(frame);
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    step(dt);
+    draw();
+    uiTimer += dt; saveTimer += dt;
+    if (uiTimer > 0.2) { uiTimer = 0; refresh(); }
+    if (saveTimer > 5) { saveTimer = 0; save(); }
+  };
+  requestAnimationFrame(frame);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) save(); else last = performance.now(); });
+  window.addEventListener('pagehide', save);
+})();
+</script>
