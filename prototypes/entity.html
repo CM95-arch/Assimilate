@@ -81,6 +81,17 @@
   .item.ready { border-color: var(--ink); }
   .item.done { opacity: 0.3; cursor: default; }
   .item.mystery { border-style: dashed; opacity: 0.55; cursor: default; }
+  /* Opening: the title floats over a far-off view, then the camera glides in and the interface arrives. */
+  #intro {
+    position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    gap: 10px; pointer-events: none; text-align: center; padding-top: 24vh;
+    opacity: 0; transition: opacity 1.4s ease;
+  }
+  #intro.show { opacity: 1; }
+  #intro h1 { margin: 0; font-size: 34px; font-weight: 300; letter-spacing: 0.5em; text-transform: uppercase; padding-left: 0.5em; }
+  #intro p { margin: 0; font-size: 13px; color: var(--mute); letter-spacing: 0.08em; }
+  header, #dock { transition: opacity 1.4s ease; }
+  body.opening header, body.opening #dock, body.opening #home { opacity: 0; pointer-events: none; }
   #home {
     position: fixed; right: max(18px, env(safe-area-inset-right, 0px)); top: calc(env(safe-area-inset-top, 0px) + 64px);
     width: 40px; height: 40px; padding: 0; font-size: 18px; line-height: 1;
@@ -108,6 +119,7 @@
   <nav id="shop" aria-label="Buy"></nav>
 </div>
 <button id="home" class="pill" type="button" hidden aria-label="Back to the normal view">◎</button>
+<div id="intro" aria-hidden="true"><h1>Entity</h1><p>Everything falls inward, eventually</p></div>
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1082,7 +1094,7 @@
   canvas.addEventListener('pointercancel', (e) => { endPointer(e); down = null; });
   canvas.addEventListener('pointerup', (e) => {
     endPointer(e);
-    if (!down || down.moved) { down = null; return; }
+    if (!down || down.moved || opening) { down = null; return; }
     down = null;
     const z = Math.exp(cam.lz), vc = viewCenter();
     const wx = (e.clientX - vc.x) / z + cam.x, wy = (e.clientY - vc.y) / z + cam.y;
@@ -1137,12 +1149,36 @@
       const before = S.total;
       for (let s = 0; s < away; s += 1) step(1, true);
       const gained = S.total - before;
-      if (gained > 0) setTimeout(() => toast(`While you were away the entity absorbed ${fmt(gained)}`), 600);
+      if (gained > 0) setTimeout(() => toast(`While you were away the entity absorbed ${fmt(gained)}`), 4600);
     }
   }
 
   resize();
   { const tg = camTarget(); cam.x = tg.x; cam.y = tg.y; cam.lz = Math.log(tg.z); }
+
+  // Opening: start far out with the title, glide in, then bring in the interface. A tap skips it.
+  let opening = true;
+  const introEl = document.getElementById('intro');
+  document.body.classList.add('opening');
+  user.lz = Math.log(0.05);
+  cam.lz += user.lz;
+  const timers = [];
+  const finishOpening = () => {
+    if (!opening) return;
+    opening = false;
+    timers.forEach(clearTimeout);
+    resetUserView();
+    introEl.classList.remove('show');
+    document.body.classList.remove('opening');
+  };
+  if (reduced) finishOpening();
+  else {
+    requestAnimationFrame(() => introEl.classList.add('show'));
+    timers.push(setTimeout(() => resetUserView(), 1700));
+    timers.push(setTimeout(() => introEl.classList.remove('show'), 3000));
+    timers.push(setTimeout(finishOpening, 4200));
+    window.addEventListener('pointerdown', finishOpening, { once: true });
+  }
   buildShop();
   refresh();
   let last = performance.now(), uiTimer = 0, saveTimer = 0;
