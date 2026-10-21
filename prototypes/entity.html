@@ -493,6 +493,17 @@
 
   // ================================================================ simulation
   const ripples = [], jetFx = [], flares = [];
+  // Visual-only particles (never saved): comet tails and jet streams.
+  const cometFx = [], jetParts = [];
+  const MAX_FX = 1100;
+  let jetEmit = 0;
+  const cometState = new Map(); // comet index -> last position, for its velocity
+  const jetAxis = () => -Math.PI / 2 + 0.35 + 0.14 * Math.sin(t * 0.017);
+  const cometPos = (c) => {
+    const r = (c.a * (1 - c.e * c.e)) / (1 + c.e * Math.cos(c.th));
+    const a = c.th + c.tilt;
+    return { x: Math.cos(a) * r, y: Math.sin(a) * r, r };
+  };
   const pulse = (x, y, r, color, life = 1.6, parent = 0, delay = 0) => ripples.push({ x, y, r, color, life, t: -delay, parent });
   const gains = [];
   let gainAcc = 0;
@@ -513,6 +524,59 @@
       if (!pl) return;
       pl.mass += q.v * 1.5 * (1 + 0.5 * pl.lv.atmo);
       if (!quiet) pulse(Math.cos(q.th) * parentR, Math.sin(q.th) * parentR, q.s * 2, q.c, 1.1, pl.id);
+    }
+  };
+
+  // Comet tails and jet streams: fine particles that drift, fade and never affect the economy.
+  const stepFx = (dt) => {
+    S.comets.forEach((c, i) => {
+      const p = cometPos(c);
+      const prev = cometState.get(i);
+      cometState.set(i, p);
+      if (!prev) return;
+      const vx = (p.x - prev.x) / Math.max(dt, 1e-3), vy = (p.y - prev.y) / Math.max(dt, 1e-3);
+      const ux = p.x / (p.r || 1), uy = p.y / (p.r || 1);
+      // Shedding grows sharply as the comet nears the entity.
+      const close = Math.max(0, 1 - p.r / (c.a * 1.1));
+      const rate = 14 + 160 * close * close;
+      let n = rate * dt + Math.random();
+      while (n-- >= 1 && cometFx.length < MAX_FX) {
+        const ion = Math.random() < 0.3;
+        const j = () => (Math.random() - 0.5) * 2.4;
+        cometFx.push(ion
+          ? { x: p.x, y: p.y, vx: ux * rand(16, 28) + j() * 0.3, vy: uy * rand(16, 28) + j() * 0.3, ax: 0, ay: 0, age: 0, life: rand(1.6, 2.8), s: rand(0.35, 0.6), c: 'ion' }
+          : { x: p.x + j(), y: p.y + j(), vx: vx * 0.86 + ux * rand(2, 6) + j(), vy: vy * 0.86 + uy * rand(2, 6) + j(), ax: ux * 2.2, ay: uy * 2.2, age: 0, life: rand(4, 9), s: rand(0.5, 1.15), c: Math.random() < 0.12 ? pick([COL.yellow, COL.red]) : COL.ink });
+      }
+    });
+    for (let i = cometFx.length - 1; i >= 0; i--) {
+      const f = cometFx[i];
+      f.age += dt;
+      if (f.age > f.life) { cometFx[i] = cometFx[cometFx.length - 1]; cometFx.pop(); continue; }
+      f.vx += f.ax * dt; f.vy += f.ay * dt;
+      f.vx *= 1 - 0.08 * dt; f.vy *= 1 - 0.08 * dt;
+      f.x += f.vx * dt; f.y += f.vy * dt;
+    }
+    // Jets: a steady trickle, and a surge for a few seconds after a planet falls in.
+    if (L().jets) {
+      let rate = 30 + 14 * L().jets;
+      for (const j of jetFx) rate += 260 * j.power * Math.max(0, 1 - j.t / j.life);
+      jetEmit += rate * dt;
+      const R = entityRadius();
+      while (jetEmit >= 1 && jetParts.length < MAX_FX) {
+        jetEmit -= 1;
+        const surge = jetFx.length > 0;
+        const knot = Math.random() < 0.06;
+        jetParts.push({
+          d: R * 1.05, v: R * rand(2.4, 3.6) * (surge ? 1.5 : 1), side: Math.random() < 0.5 ? 1 : -1, axis: jetAxis(),
+          ph: rand(0, Math.PI * 2), sp: rand(-1, 1), s: knot ? rand(1.4, 2.2) : rand(0.4, 0.9), knot,
+        });
+      }
+    }
+    const reach = entityRadius() * (16 + 3 * L().jets);
+    for (let i = jetParts.length - 1; i >= 0; i--) {
+      const q = jetParts[i];
+      q.d += q.v * dt;
+      if (q.d > reach) { jetParts[i] = jetParts[jetParts.length - 1]; jetParts.pop(); }
     }
   };
 
@@ -637,6 +701,7 @@
     S.trickle += dt;
     while (S.trickle > trickleEvery()) { S.trickle -= trickleEvery(); addEntityDust(1, quiet ? { instant: true } : {}); }
 
+    if (!quiet) stepFx(dt);
     if (!quiet) {
       for (const r of ripples) r.t += dt;
       for (let i = ripples.length - 1; i >= 0; i--) if (ripples[i].t > ripples[i].life) ripples.splice(i, 1);
@@ -753,69 +818,111 @@
     ctx.globalAlpha = 1;
   };
 
+  // Photon ring: a thin band of bent light hugging the entity. One side is brighter (light
+  // beamed toward us) and that bright side drifts very slowly round.
   const drawPhotonRing = (R, px) => {
     const lv = L().halo;
     if (!lv) return;
-    const r = R * 1.55;
-    const breathe = 0.5 + 0.5 * Math.sin(t * 0.9);
-    ctx.lineWidth = Math.max(px * (1 + 0.15 * lv), 0.4);
-    ctx.strokeStyle = rgba(COL.yellow, (0.35 + 0.25 * breathe) * (1 + 0.6 * N));
-    ctx.setLineDash([R * 0.08, R * 0.12]);
-    ctx.lineDashOffset = -t * R * 0.2;
+    const r = R * 1.07;
+    const phase = t * 0.045;
+    const strength = (0.75 + 0.05 * lv) * (1 + 0.5 * N);
+    // A soft golden bloom spilling outward from the rim.
+    const bloom = ctx.createRadialGradient(0, 0, R, 0, 0, R * (1.6 + 0.08 * lv));
+    bloom.addColorStop(0, rgba(COL.yellow, (0.16 + 0.02 * lv) * (1 + N)));
+    bloom.addColorStop(1, rgba(COL.yellow, 0));
+    ctx.fillStyle = bloom;
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.strokeStyle = rgba(COL.yellow, 0.18);
-    ctx.lineWidth = Math.max(px * 0.6, 0.3);
+    ctx.arc(0, 0, R * (1.6 + 0.08 * lv), 0, Math.PI * 2);
+    ctx.arc(0, 0, R, 0, Math.PI * 2, true);
+    ctx.fill();
+    const SEG = 120;
+    const beam = (a) => { const k = 0.5 + 0.5 * Math.cos(a - phase); return 0.25 + 0.75 * k * k; };
+    ctx.lineCap = 'butt';
+    for (const [width, alpha] of [[R * 0.3, 0.07], [R * 0.12, 0.2], [Math.max(px * 1.4, R * 0.04), 0.9], [Math.max(px * 0.6, R * 0.012), 1]]) {
+      ctx.lineWidth = width;
+      for (let i = 0; i < SEG; i++) {
+        const a0 = (i / SEG) * Math.PI * 2, a1 = ((i + 1.08) / SEG) * Math.PI * 2;
+        ctx.strokeStyle = rgba(COL.yellow, alpha * beam((a0 + a1) / 2) * strength);
+        ctx.beginPath();
+        ctx.arc(0, 0, r, a0, a1);
+        ctx.stroke();
+      }
+    }
+    // A second, fainter image of the ring just outside the first.
+    ctx.lineWidth = Math.max(px * 0.7, R * 0.01);
+    ctx.strokeStyle = rgba(COL.yellow, 0.3 * strength);
     ctx.beginPath();
-    ctx.arc(0, 0, r * 1.07, 0, Math.PI * 2);
+    ctx.arc(0, 0, R * 1.2, 0, Math.PI * 2);
     ctx.stroke();
-    // Flares: a brief radial streak where a lucky arrival lands.
+    // Flares: light blooms along the ring from where a lucky arrival lands, then fades.
     for (const f of flares) {
       const k = f.t / 1.4;
-      ctx.strokeStyle = rgba(f.c, (1 - k) * 0.8);
-      ctx.lineWidth = Math.max(px * 2, 0.6);
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(f.th) * R, Math.sin(f.th) * R);
-      ctx.lineTo(Math.cos(f.th) * R * (1.6 + ease(k) * 3), Math.sin(f.th) * R * (1.6 + ease(k) * 3));
-      ctx.stroke();
+      const spread = 0.15 + ease(Math.min(1, k * 1.3)) * 1.1;
+      const fade = (1 - k) * (1 - k);
+      for (let i = -8; i <= 8; i++) {
+        const a = f.th + (i / 8) * spread;
+        const w = 1 - Math.abs(i) / 9;
+        ctx.strokeStyle = rgba(f.c, 0.7 * w * fade * (1 + 0.4 * N));
+        ctx.lineWidth = R * (0.06 + 0.1 * w * (1 - k));
+        ctx.beginPath();
+        ctx.arc(0, 0, r, a - spread / 16, a + spread / 16);
+        ctx.stroke();
+      }
     }
   };
 
+  // Polar jets: fine matter pouring out of the poles in a slow helix, with brighter knots.
   const drawJets = (R, px) => {
     const lv = L().jets;
     if (!lv) return;
-    const axis = -Math.PI / 2 + 0.35;
-    const idle = 0.12 + 0.06 * Math.sin(t * 1.3);
-    const drawPair = (power, len, alpha) => {
-      for (const s of [1, -1]) {
-        const dx = Math.cos(axis) * s, dy = Math.sin(axis) * s;
-        const gr = ctx.createLinearGradient(dx * R, dy * R, dx * R * len, dy * R * len);
-        gr.addColorStop(0, rgba(N > 0.5 ? 'glow' : COL.ink, alpha * (1 + 0.5 * N)));
-        gr.addColorStop(1, rgba(N > 0.5 ? 'glow' : COL.ink, 0));
-        ctx.strokeStyle = gr;
-        ctx.lineWidth = Math.max(px * (1 + power * 3), R * 0.06 * power + px);
-        ctx.beginPath();
-        ctx.moveTo(dx * R, dy * R);
-        ctx.lineTo(dx * R * len, dy * R * len);
-        ctx.stroke();
-      }
-    };
-    drawPair(0.2, 4 + lv, idle);
-    for (const j of jetFx) {
-      const k = j.t / j.life;
-      drawPair(j.power, 4 + ease(Math.min(1, k * 2.5)) * 26, (1 - k) * 0.55 * j.power + 0.05);
+    const col = N > 0.5 ? 'glow' : COL.ink;
+    const axis = jetAxis();
+    const reach = R * (16 + 3 * lv);
+    const surge = jetFx.reduce((m, j) => Math.max(m, j.power * (1 - j.t / j.life)), 0);
+    // A faint core along each beam.
+    for (const sd of [1, -1]) {
+      const dx = Math.cos(axis) * sd, dy = Math.sin(axis) * sd;
+      const gr = ctx.createLinearGradient(dx * R, dy * R, dx * reach * 0.7, dy * reach * 0.7);
+      gr.addColorStop(0, rgba(col, (0.1 + 0.25 * surge) * (1 + 0.6 * N)));
+      gr.addColorStop(1, rgba(col, 0));
+      ctx.fillStyle = gr;
+      // A widening cone of faint light, then a bright thread down its middle.
+      const nx = -dy, ny = dx, w0 = R * 0.2, w1 = R * (1.2 + 0.15 * lv + 2 * surge);
+      ctx.beginPath();
+      ctx.moveTo(dx * R + nx * w0, dy * R + ny * w0);
+      ctx.lineTo(dx * reach * 0.75 + nx * w1, dy * reach * 0.75 + ny * w1);
+      ctx.lineTo(dx * reach * 0.75 - nx * w1, dy * reach * 0.75 - ny * w1);
+      ctx.lineTo(dx * R - nx * w0, dy * R - ny * w0);
+      ctx.fill();
+      ctx.strokeStyle = gr;
+      ctx.lineWidth = Math.max(px, R * (0.06 + 0.1 * surge));
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(dx * R, dy * R);
+      ctx.lineTo(dx * reach * 0.6, dy * reach * 0.6);
+      ctx.stroke();
     }
+    ctx.fillStyle = N > 0.5 ? PALS.glow : paint(COL.ink);
+    for (const q of jetParts) {
+      const k = q.d / reach;
+      const width = R * 0.12 + q.d * 0.07;
+      const off = Math.sin(q.d / (R * 2.2) - t * 0.5) * width * 0.55 + q.sp * width * 0.45;
+      const ax = Math.cos(q.axis) * q.side, ay = Math.sin(q.axis) * q.side;
+      const x = ax * q.d - ay * off, y = ay * q.d + ax * off;
+      const s = Math.max(px * 0.5, q.s * (1 - k * 0.5));
+      ctx.globalAlpha = Math.min(1, (1 - k) * 1.3) * (q.knot ? 0.85 : 0.5) * (1 + 0.4 * N);
+      ctx.beginPath();
+      ctx.arc(x, y, s, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   };
 
+  // Comets: a faint path, a coma, and two tails made of real drifting particles: a curved dust
+  // tail and a straight ion tail pointing away from the entity.
   const drawComets = (px) => {
     for (const c of S.comets) {
-      const r = (c.a * (1 - c.e * c.e)) / (1 + c.e * Math.cos(c.th));
-      const a = c.th + c.tilt;
-      const x = Math.cos(a) * r, y = Math.sin(a) * r;
-      // Its path, faint.
-      ctx.strokeStyle = rgba(COL.ink, 0.06);
+      ctx.strokeStyle = rgba(COL.ink, 0.05);
       ctx.lineWidth = px;
       ctx.beginPath();
       for (let k = 0; k <= 120; k++) {
@@ -824,28 +931,52 @@
         k ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
       }
       ctx.stroke();
-      // Its tail points away from the entity and stretches as it comes close.
-      const d = Math.hypot(x, y) || 1, ux = x / d, uy = y / d;
-      const tail = Math.min(90, 5200 / d);
-      for (let k = 10; k >= 1; k--) {
-        const f = k / 10;
-        ctx.fillStyle = rgba(COL.ink, 0.28 * (1 - f));
-        ctx.beginPath();
-        ctx.arc(x + ux * tail * f + (-uy) * Math.sin(k + t) * 0.8, y + uy * tail * f + ux * Math.sin(k + t) * 0.8, Math.max(px, 2.4 * (1 - f * 0.7)), 0, Math.PI * 2);
-        ctx.fill();
+    }
+    // Tails, batched: ion particles together, dust by colour.
+    for (const f of cometFx) {
+      const k = f.age / f.life;
+      const a = Math.pow(1 - k, 1.4);
+      if (f.c === 'ion') {
+        ctx.fillStyle = N > 0.5 ? PALS.glow : paint(COL.blue);
+        ctx.globalAlpha = a * (0.35 + 0.35 * N);
+      } else {
+        ctx.fillStyle = paint(f.c);
+        ctx.globalAlpha = a * (f.c === COL.ink ? 0.45 + 0.25 * N : 0.8);
       }
-      if (N > 0.01) {
-        const gr = ctx.createRadialGradient(x, y, 0, x, y, 14);
-        gr.addColorStop(0, rgba('glow', 0.45 * N));
-        gr.addColorStop(1, rgba('glow', 0));
-        ctx.fillStyle = gr;
-        ctx.beginPath();
-        ctx.arc(x, y, 14, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      const s = Math.max(px * 0.45, f.s * (1 - 0.4 * k));
+      ctx.fillRect(f.x - s, f.y - s, s * 2, s * 2);
+    }
+    ctx.globalAlpha = 1;
+    for (const c of S.comets) {
+      const p = cometPos(c);
+      const close = Math.max(0, 1 - p.r / (c.a * 1.1));
+      // Smooth ion tail: a tapered wedge of light streaming straight away from the entity.
+      const ux = p.x / (p.r || 1), uy = p.y / (p.r || 1);
+      const len = 14 + 70 * close;
+      const w = 1.6 + 2.5 * close;
+      const ex = p.x + ux * len, ey = p.y + uy * len;
+      const ion = N > 0.5 ? 'glow' : COL.blue;
+      const tg = ctx.createLinearGradient(p.x, p.y, ex, ey);
+      tg.addColorStop(0, rgba(ion, (0.22 + 0.25 * close) * (1 + 0.5 * N)));
+      tg.addColorStop(1, rgba(ion, 0));
+      ctx.fillStyle = tg;
+      ctx.beginPath();
+      ctx.moveTo(p.x - uy * w, p.y + ux * w);
+      ctx.quadraticCurveTo(ex - uy * w * 0.4, ey + ux * w * 0.4, ex, ey);
+      ctx.quadraticCurveTo(ex + uy * w * 0.4, ey - ux * w * 0.4, p.x + uy * w, p.y - ux * w);
+      ctx.closePath();
+      ctx.fill();
+      const coma = 5 + 9 * close;
+      const gr = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, coma);
+      gr.addColorStop(0, rgba(N > 0.5 ? 'glow' : COL.ink, (0.22 + 0.25 * close) * (1 + N)));
+      gr.addColorStop(1, rgba(N > 0.5 ? 'glow' : COL.ink, 0));
+      ctx.fillStyle = gr;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, coma, 0, Math.PI * 2);
+      ctx.fill();
       ctx.fillStyle = paint(COL.ink);
       ctx.beginPath();
-      ctx.arc(x, y, Math.max(px * 2, 2.6), 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, Math.max(px * 1.6, 2), 0, Math.PI * 2);
       ctx.fill();
     }
   };
