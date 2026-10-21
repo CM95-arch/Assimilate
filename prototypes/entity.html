@@ -7,6 +7,7 @@
   /* Layout: the sky fills the screen; a whisper of type on top; a strip of purchases along the bottom. */
   :root {
     --sky: #FBFBF8;
+    --sky-rgb: 251, 251, 248;
     --ink: #151515;
     --mute: #8E8C86;
     --line: #E6E4DE;
@@ -26,7 +27,7 @@
   header {
     position: fixed; top: 0; left: 0; right: 0; pointer-events: none;
     display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
-    background: linear-gradient(var(--sky) 55%, rgba(251, 251, 248, 0));
+    background: linear-gradient(var(--sky) 55%, rgba(var(--sky-rgb), 0));
     padding-top: calc(env(safe-area-inset-top, 0px) + 16px); padding-bottom: 28px;
     padding-left: max(18px, env(safe-area-inset-left, 0px));
     padding-right: max(18px, env(safe-area-inset-right, 0px));
@@ -41,7 +42,7 @@
   #reset.armed { color: var(--red); border-color: var(--red); }
   #dock {
     position: fixed; left: 0; right: 0; bottom: 0; padding-top: 34px;
-    background: linear-gradient(rgba(251, 251, 248, 0), var(--sky) 38%);
+    background: linear-gradient(rgba(var(--sky-rgb), 0), var(--sky) 38%);
     padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
   }
   #title {
@@ -72,7 +73,7 @@
   }
   .item:active { transform: scale(0.97); }
   .item:focus-visible, .pill:focus-visible, #reset:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-  .item svg { width: 26px; height: 26px; }
+  .item svg { width: 26px; height: 26px; color: var(--ink); }
   .item .name { font-size: 15px; font-weight: 500; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
   .item .lv { font-size: 11px; color: var(--mute); white-space: nowrap; }
   .item .what { font-size: 12px; color: var(--mute); line-height: 1.3; min-height: 47px; }
@@ -126,7 +127,43 @@
 (() => {
   // ================================================================ constants
   const COL = { ink: '#151515', red: '#DF4230', yellow: '#EFB32B', blue: '#2556C4', sky: '#FBFBF8', mute: '#8E8C86' };
-  const RGB = { [COL.ink]: '21,21,21', [COL.red]: '223,66,48', [COL.yellow]: '239,179,43', [COL.blue]: '37,86,196' };
+  // Day and night palettes. Everything is drawn through paint()/rgba(), which blend between them.
+  const DAY = {
+    [COL.sky]: [251, 251, 248], [COL.ink]: [21, 21, 21], [COL.mute]: [142, 140, 134],
+    [COL.red]: [223, 66, 48], [COL.yellow]: [239, 179, 43], [COL.blue]: [37, 86, 196],
+    body: [21, 21, 21], glow: [21, 21, 21], line: [230, 228, 222],
+  };
+  const NIGHT = {
+    [COL.sky]: [11, 13, 20], [COL.ink]: [205, 211, 226], [COL.mute]: [108, 115, 132],
+    [COL.red]: [255, 108, 86], [COL.yellow]: [255, 205, 96], [COL.blue]: [104, 156, 255],
+    body: [4, 5, 8], glow: [190, 210, 255], line: [40, 45, 58],
+  };
+  const PAL = {}, PALS = {};
+  let N = 0; // 0 = day, 1 = night
+  const mix = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * k));
+  const setPalette = (n) => {
+    N = n;
+    for (const k of Object.keys(DAY)) { PAL[k] = mix(DAY[k], NIGHT[k], n); PALS[k] = `rgb(${PAL[k].join(',')})`; }
+    const root = document.documentElement.style;
+    root.setProperty('--sky', PALS[COL.sky]);
+    root.setProperty('--sky-rgb', PAL[COL.sky].join(','));
+    root.setProperty('--ink', PALS[COL.ink]);
+    root.setProperty('--mute', PALS[COL.mute]);
+    root.setProperty('--line', PALS.line);
+    root.setProperty('--card', `rgba(${mix([255, 255, 255], [24, 28, 38], n).join(',')},0.86)`);
+    root.setProperty('color-scheme', n > 0.5 ? 'dark' : 'light');
+    document.body.style.background = PALS[COL.sky];
+  };
+  const paint = (c) => PALS[c] || PALS[COL.ink];
+  // How dark the sky should be at this local time: dusk from 18:30 to 20:30, dawn from 5:30 to 7:30.
+  const nightness = (d = new Date()) => {
+    const forced = location.hash.replace('#', '');
+    if (forced === 'night') return 1;
+    if (forced === 'day') return 0;
+    const h = d.getHours() + d.getMinutes() / 60;
+    const ss = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
+    return h >= 12 ? ss(18.5, 20.5, h) : 1 - ss(5.5, 7.5, h);
+  };
   const DUST_COLORS = [COL.ink, COL.ink, COL.ink, COL.ink, COL.red, COL.yellow, COL.blue];
   const PLANET_COLORS = [COL.red, COL.blue, COL.yellow];
   const SLOTS = [110, 160, 215, 275, 340, 410];
@@ -149,7 +186,7 @@
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
   const hash = (n) => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
-  const rgba = (c, a) => `rgba(${RGB[c] || '21,21,21'},${a})`;
+  const rgba = (c, a) => `rgba(${(PAL[c] || PAL[COL.ink]).join(',')},${a})`;
 
   // ================================================================ state
   const LV0 = { dust: 0, gravity: 0, disk: 0, halo: 0, comet: 0, belt: 0, nebula: 0, jets: 0 };
@@ -243,22 +280,22 @@
   // ================================================================ upgrades
   // Every upgrade has its own look, and buying one plays a short camera moment.
   const ICON = {
-    dust: '<circle cx="5" cy="9" r="1.5" fill="#151515"/><circle cx="14" cy="4" r="1.2" fill="#DF4230"/><circle cx="21" cy="11" r="1.7" fill="#151515"/><circle cx="9" cy="18" r="1.3" fill="#2556C4"/><circle cx="18" cy="21" r="1.2" fill="#EFB32B"/><circle cx="13" cy="13" r="1" fill="#151515"/>',
+    dust: '<circle cx="5" cy="9" r="1.5" fill="currentColor"/><circle cx="14" cy="4" r="1.2" fill="#DF4230"/><circle cx="21" cy="11" r="1.7" fill="currentColor"/><circle cx="9" cy="18" r="1.3" fill="#2556C4"/><circle cx="18" cy="21" r="1.2" fill="#EFB32B"/><circle cx="13" cy="13" r="1" fill="currentColor"/>',
     planet: '<circle cx="13" cy="13" r="8" fill="#2556C4"/>',
-    gravity: '<circle cx="13" cy="13" r="5" fill="#151515"/><circle cx="13" cy="13" r="10.5" fill="none" stroke="#151515" stroke-width="1.2" stroke-dasharray="2 3"/>',
-    disk: '<ellipse cx="13" cy="13" rx="12" ry="4.5" fill="none" stroke="#151515" stroke-width="0.8" opacity=".5"/><ellipse cx="13" cy="13" rx="9" ry="3.2" fill="none" stroke="#151515" stroke-width="0.8" opacity=".7"/><circle cx="13" cy="13" r="4" fill="#151515"/>',
-    halo: '<circle cx="13" cy="13" r="5" fill="#151515"/><circle cx="13" cy="13" r="8.5" fill="none" stroke="#EFB32B" stroke-width="1.5"/>',
-    comet: '<circle cx="20" cy="6" r="3.2" fill="#151515"/><circle cx="14" cy="12" r="2" fill="#151515" opacity=".45"/><circle cx="9" cy="17" r="1.4" fill="#151515" opacity=".25"/><circle cx="5" cy="21" r="1" fill="#151515" opacity=".15"/>',
-    belt: '<rect x="2" y="12" width="3.5" height="3.5" fill="#8E8C86" transform="rotate(20 4 14)"/><rect x="9" y="7" width="3" height="3" fill="#151515"/><rect x="16" y="11" width="4" height="4" fill="#8E8C86" transform="rotate(-15 18 13)"/><rect x="21" y="5" width="2.5" height="2.5" fill="#DF4230"/><rect x="11" y="17" width="2.5" height="2.5" fill="#8E8C86"/>',
+    gravity: '<circle cx="13" cy="13" r="5" fill="currentColor"/><circle cx="13" cy="13" r="10.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 3"/>',
+    disk: '<ellipse cx="13" cy="13" rx="12" ry="4.5" fill="none" stroke="currentColor" stroke-width="0.8" opacity=".5"/><ellipse cx="13" cy="13" rx="9" ry="3.2" fill="none" stroke="currentColor" stroke-width="0.8" opacity=".7"/><circle cx="13" cy="13" r="4" fill="currentColor"/>',
+    halo: '<circle cx="13" cy="13" r="5" fill="currentColor"/><circle cx="13" cy="13" r="8.5" fill="none" stroke="#EFB32B" stroke-width="1.5"/>',
+    comet: '<circle cx="20" cy="6" r="3.2" fill="currentColor"/><circle cx="14" cy="12" r="2" fill="currentColor" opacity=".45"/><circle cx="9" cy="17" r="1.4" fill="currentColor" opacity=".25"/><circle cx="5" cy="21" r="1" fill="currentColor" opacity=".15"/>',
+    belt: '<rect x="2" y="12" width="3.5" height="3.5" fill="#8E8C86" transform="rotate(20 4 14)"/><rect x="9" y="7" width="3" height="3" fill="currentColor"/><rect x="16" y="11" width="4" height="4" fill="#8E8C86" transform="rotate(-15 18 13)"/><rect x="21" y="5" width="2.5" height="2.5" fill="#DF4230"/><rect x="11" y="17" width="2.5" height="2.5" fill="#8E8C86"/>',
     nebula: '<circle cx="9" cy="11" r="7" fill="#DF4230" opacity=".18"/><circle cx="16" cy="14" r="8" fill="#2556C4" opacity=".16"/><circle cx="13" cy="9" r="5" fill="#EFB32B" opacity=".2"/>',
-    jets: '<circle cx="13" cy="13" r="3.5" fill="#151515"/><line x1="13" y1="1" x2="13" y2="9" stroke="#151515" stroke-width="1.4"/><line x1="13" y1="17" x2="13" y2="25" stroke="#151515" stroke-width="1.4"/>',
-    ring: '<circle cx="13" cy="13" r="5" fill="#DF4230"/><circle cx="13" cy="13" r="10" fill="none" stroke="#151515" stroke-width="1" stroke-dasharray="1.2 2.6"/>',
-    moon: '<circle cx="10" cy="15" r="6.5" fill="#2556C4"/><circle cx="21" cy="6" r="2.6" fill="#151515"/>',
+    jets: '<circle cx="13" cy="13" r="3.5" fill="currentColor"/><line x1="13" y1="1" x2="13" y2="9" stroke="currentColor" stroke-width="1.4"/><line x1="13" y1="17" x2="13" y2="25" stroke="currentColor" stroke-width="1.4"/>',
+    ring: '<circle cx="13" cy="13" r="5" fill="#DF4230"/><circle cx="13" cy="13" r="10" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="1.2 2.6"/>',
+    moon: '<circle cx="10" cy="15" r="6.5" fill="#2556C4"/><circle cx="21" cy="6" r="2.6" fill="currentColor"/>',
     atmo: '<circle cx="13" cy="13" r="11" fill="#2556C4" opacity=".14"/><circle cx="13" cy="13" r="7" fill="#2556C4"/>',
-    rings: '<circle cx="13" cy="13" r="6" fill="#EFB32B"/><ellipse cx="13" cy="13" rx="12" ry="4" fill="none" stroke="#151515" stroke-width="1.4" transform="rotate(-18 13 13)"/>',
-    core: '<circle cx="13" cy="13" r="10" fill="#DF4230"/><circle cx="13" cy="13" r="4" fill="#151515" opacity=".25"/>',
-    trojan: '<path d="M2 20 A 14 14 0 0 1 24 20" fill="none" stroke="#151515" stroke-width=".8" opacity=".4"/><circle cx="13" cy="7" r="3.5" fill="#2556C4"/><circle cx="4" cy="14" r="1.1" fill="#151515"/><circle cx="6" cy="12" r="1" fill="#151515"/><circle cx="22" cy="14" r="1.1" fill="#151515"/><circle cx="20" cy="12" r="1" fill="#151515"/>',
-    anchor: '<circle cx="13" cy="13" r="10" fill="none" stroke="#151515" stroke-width="1.6"/><circle cx="13" cy="3" r="3" fill="#EFB32B"/>',
+    rings: '<circle cx="13" cy="13" r="6" fill="#EFB32B"/><ellipse cx="13" cy="13" rx="12" ry="4" fill="none" stroke="currentColor" stroke-width="1.4" transform="rotate(-18 13 13)"/>',
+    core: '<circle cx="13" cy="13" r="10" fill="#DF4230"/><circle cx="13" cy="13" r="4" fill="currentColor" opacity=".25"/>',
+    trojan: '<path d="M2 20 A 14 14 0 0 1 24 20" fill="none" stroke="currentColor" stroke-width=".8" opacity=".4"/><circle cx="13" cy="7" r="3.5" fill="#2556C4"/><circle cx="4" cy="14" r="1.1" fill="currentColor"/><circle cx="6" cy="12" r="1" fill="currentColor"/><circle cx="22" cy="14" r="1.1" fill="currentColor"/><circle cx="20" cy="12" r="1" fill="currentColor"/>',
+    anchor: '<circle cx="13" cy="13" r="10" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="13" cy="3" r="3" fill="#EFB32B"/>',
   };
 
   const SYSTEM = [
@@ -608,14 +645,15 @@
     STARS.forEach((layer, li) => {
       const f = li ? 0.12 : 0.05;
       const zz = Math.pow(z, li ? 0.14 : 0.06);
-      ctx.fillStyle = COL.ink;
+      ctx.fillStyle = N > 0.5 ? 'rgb(235,240,255)' : paint(COL.ink);
       for (const s of layer) {
         let x = (s.x * tile - cam.x * f * z + t * (li ? 0.6 : 0.25)) * zz;
         let y = (s.y * tile - cam.y * f * z) * zz;
         x = ((x % tile) + tile) % tile - (tile - W) / 2;
         y = ((y % tile) + tile) % tile - (tile - H) / 2;
-        ctx.globalAlpha = s.a;
-        ctx.fillRect(x, y, s.s, s.s);
+        // At night the far grains become faint stars that slowly twinkle.
+        ctx.globalAlpha = s.a * (1 + N * (1.6 + 0.8 * Math.sin(t * (0.4 + s.x) + s.y * 40)));
+        ctx.fillRect(x, y, s.s * (1 + N * 0.4), s.s * (1 + N * 0.4));
       }
     });
     ctx.globalAlpha = 1;
@@ -636,7 +674,7 @@
       const s = (70 + b.s * 120) * (0.8 + 0.1 * lv);
       const c = [COL.red, COL.blue, COL.yellow][b.arm];
       const gr = ctx.createRadialGradient(x, y, 0, x, y, s);
-      gr.addColorStop(0, rgba(c, 0.07 + 0.012 * lv));
+      gr.addColorStop(0, rgba(c, (0.07 + 0.012 * lv) * (1 + 1.6 * N)));
       gr.addColorStop(1, rgba(c, 0));
       ctx.fillStyle = gr;
       ctx.beginPath();
@@ -654,7 +692,7 @@
       const a = (i / n) * Math.PI * 2 + t * w * (0.85 + 0.3 * hash(i)) + hash(i * 3) * 0.2;
       const r = br + (hash(i * 7) - 0.5) * 34;
       const s = Math.max(1.2 + hash(i * 11) * 2.4, px * 0.7);
-      ctx.fillStyle = i % 13 === 0 ? COL.red : i % 5 === 0 ? COL.ink : COL.mute;
+      ctx.fillStyle = paint(i % 13 === 0 ? COL.red : i % 5 === 0 ? COL.ink : COL.mute);
       ctx.globalAlpha = 0.55;
       ctx.save();
       ctx.translate(Math.cos(a) * r, Math.sin(a) * r);
@@ -684,8 +722,8 @@
     }
     ctx.lineWidth = Math.max(px * 0.8, 0.35);
     for (const [c, p] of paths) {
-      ctx.strokeStyle = c;
-      ctx.globalAlpha = c === COL.ink ? 0.16 : 0.3;
+      ctx.strokeStyle = paint(c);
+      ctx.globalAlpha = (c === COL.ink ? 0.16 : 0.3) * (1 + 0.8 * N);
       ctx.stroke(p);
     }
     ctx.globalAlpha = 1;
@@ -697,7 +735,7 @@
     const r = R * 1.55;
     const breathe = 0.5 + 0.5 * Math.sin(t * 0.9);
     ctx.lineWidth = Math.max(px * (1 + 0.15 * lv), 0.4);
-    ctx.strokeStyle = rgba(COL.yellow, 0.35 + 0.25 * breathe);
+    ctx.strokeStyle = rgba(COL.yellow, (0.35 + 0.25 * breathe) * (1 + 0.6 * N));
     ctx.setLineDash([R * 0.08, R * 0.12]);
     ctx.lineDashOffset = -t * R * 0.2;
     ctx.beginPath();
@@ -730,8 +768,8 @@
       for (const s of [1, -1]) {
         const dx = Math.cos(axis) * s, dy = Math.sin(axis) * s;
         const gr = ctx.createLinearGradient(dx * R, dy * R, dx * R * len, dy * R * len);
-        gr.addColorStop(0, rgba(COL.ink, alpha));
-        gr.addColorStop(1, rgba(COL.ink, 0));
+        gr.addColorStop(0, rgba(N > 0.5 ? 'glow' : COL.ink, alpha * (1 + 0.5 * N)));
+        gr.addColorStop(1, rgba(N > 0.5 ? 'glow' : COL.ink, 0));
         ctx.strokeStyle = gr;
         ctx.lineWidth = Math.max(px * (1 + power * 3), R * 0.06 * power + px);
         ctx.beginPath();
@@ -772,7 +810,16 @@
         ctx.arc(x + ux * tail * f + (-uy) * Math.sin(k + t) * 0.8, y + uy * tail * f + ux * Math.sin(k + t) * 0.8, Math.max(px, 2.4 * (1 - f * 0.7)), 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.fillStyle = COL.ink;
+      if (N > 0.01) {
+        const gr = ctx.createRadialGradient(x, y, 0, x, y, 14);
+        gr.addColorStop(0, rgba('glow', 0.45 * N));
+        gr.addColorStop(1, rgba('glow', 0));
+        ctx.fillStyle = gr;
+        ctx.beginPath();
+        ctx.arc(x, y, 14, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = paint(COL.ink);
       ctx.beginPath();
       ctx.arc(x, y, Math.max(px * 2, 2.6), 0, Math.PI * 2);
       ctx.fill();
@@ -825,18 +872,28 @@
       }
     };
     ringBand(Math.PI, Math.PI * 2);
-    ctx.fillStyle = pl.color;
+    // Night: each planet glows softly in its own colour.
+    if (N > 0.01) {
+      const gr = ctx.createRadialGradient(p.x, p.y, pr * 0.8, p.x, p.y, pr * 2.8);
+      gr.addColorStop(0, rgba(pl.color, 0.38 * N));
+      gr.addColorStop(1, rgba(pl.color, 0));
+      ctx.fillStyle = gr;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, pr * 2.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = paint(pl.color);
     ctx.beginPath();
     ctx.arc(p.x, p.y, pr, 0, Math.PI * 2);
     ctx.fill();
     // A faint terminator gives the planet volume without breaking the flat style.
-    ctx.fillStyle = 'rgba(21,21,21,0.08)';
+    ctx.fillStyle = rgba('body', 0.08 + 0.1 * N);
     ctx.beginPath();
     ctx.arc(p.x, p.y, pr, Math.atan2(p.y, p.x) - Math.PI / 2, Math.atan2(p.y, p.x) + Math.PI / 2);
     ctx.fill();
     ringBand(0, Math.PI);
     if (focus === pl.id) {
-      ctx.strokeStyle = 'rgba(21,21,21,0.25)';
+      ctx.strokeStyle = rgba(COL.ink, 0.25);
       ctx.lineWidth = px;
       ctx.setLineDash([3 * px, 4 * px]);
       ctx.beginPath();
@@ -850,7 +907,7 @@
     const z = Math.exp(cam.lz);
     const vc = viewCenter();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = COL.sky;
+    ctx.fillStyle = paint(COL.sky);
     ctx.fillRect(0, 0, W, H);
     drawStars(z);
     ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (vc.x - cam.x * z), dpr * (vc.y - cam.y * z));
@@ -863,20 +920,31 @@
     // Orbit guides: faint, firmer for anchored planets.
     for (const pl of S.planets) {
       ctx.lineWidth = px * (1 + pl.vis.anchor);
-      ctx.strokeStyle = `rgba(21,21,21,${0.06 + 0.12 * pl.vis.anchor})`;
+      ctx.strokeStyle = rgba(COL.ink, (0.06 + 0.12 * pl.vis.anchor) * (1 - 0.3 * N));
       ctx.beginPath();
       ctx.arc(0, 0, pl.r, 0, Math.PI * 2);
       ctx.stroke();
     }
 
     // The entity's halo: wide and soft, wider as it grows.
+    // By day a soft shadow; by night a luminous halo with the entity as a silhouette against it.
     const halo = ctx.createRadialGradient(0, 0, R * 0.9, 0, 0, R * 3.8);
-    halo.addColorStop(0, 'rgba(21,21,21,0.11)');
-    halo.addColorStop(1, 'rgba(21,21,21,0)');
+    halo.addColorStop(0, rgba('body', 0.11 * (1 - N)));
+    halo.addColorStop(1, rgba('body', 0));
     ctx.fillStyle = halo;
     ctx.beginPath();
     ctx.arc(0, 0, R * 3.8, 0, Math.PI * 2);
     ctx.fill();
+    if (N > 0.01) {
+      const glow = ctx.createRadialGradient(0, 0, R * 0.96, 0, 0, R * 3.2);
+      glow.addColorStop(0, rgba('glow', 0.55 * N));
+      glow.addColorStop(0.18, rgba('glow', 0.2 * N));
+      glow.addColorStop(1, rgba('glow', 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     drawDisk(R, px);
 
@@ -906,20 +974,29 @@
     }
     ctx.lineCap = 'round';
     for (const [c, p] of trails) {
-      ctx.strokeStyle = c;
-      ctx.globalAlpha = c === COL.ink ? 0.12 : 0.22;
+      ctx.strokeStyle = paint(c);
+      ctx.globalAlpha = (c === COL.ink ? 0.12 : 0.22) * (1 + 0.7 * N);
       ctx.lineWidth = Math.max(px * 0.9, 0.45);
       ctx.stroke(p);
     }
+    // Night: a faint glow around every mote.
+    if (N > 0.01) {
+      ctx.lineWidth = Math.max(px * 3.2, 2.2);
+      for (const [c, p] of heads) {
+        ctx.strokeStyle = paint(c);
+        ctx.globalAlpha = 0.09 * N;
+        ctx.stroke(p);
+      }
+    }
     for (const [c, p] of heads) {
-      ctx.globalAlpha = c === COL.ink ? 0.72 : 0.95;
-      ctx.fillStyle = c;
+      ctx.globalAlpha = c === COL.ink ? 0.72 + 0.2 * N : 0.95;
+      ctx.fillStyle = paint(c);
       ctx.fill(p);
     }
     ctx.globalAlpha = 1;
     for (const [x, y, q] of rocks) {
       const s = Math.max(q.s * 0.8, px * 0.6);
-      ctx.fillStyle = q.c;
+      ctx.fillStyle = paint(q.c);
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(t * 0.4 + q.th * 3);
@@ -933,7 +1010,7 @@
       const k = r.t / r.life;
       const o = r.parent ? pp.get(r.parent) : null;
       const x = r.x + (o ? o.x : 0), y = r.y + (o ? o.y : 0);
-      ctx.strokeStyle = r.color;
+      ctx.strokeStyle = paint(r.color);
       ctx.globalAlpha = (1 - k) * (r.r > 20 ? 0.5 : 0.7);
       ctx.lineWidth = Math.max(px * (r.r > 20 ? 2 : 1.2), 0.3);
       ctx.beginPath();
@@ -948,7 +1025,7 @@
     drawJets(R, px);
 
     // The entity.
-    ctx.fillStyle = COL.ink;
+    ctx.fillStyle = PALS.body;
     ctx.beginPath();
     ctx.arc(0, 0, R, 0, Math.PI * 2);
     ctx.fill();
@@ -996,7 +1073,7 @@
     if (next) {
       const m = document.createElement('div');
       m.className = 'item mystery';
-      m.innerHTML = `<svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="9" fill="none" stroke="#8E8C86" stroke-dasharray="2 3"/></svg>
+      m.innerHTML = `<svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="9" fill="none" stroke="currentColor" opacity=".5" stroke-dasharray="2 3"/></svg>
         <span class="name">Something stirs</span><span class="what">Revealed when the entity has absorbed ${fmt(next.unlock)} in all</span><span class="cost"></span>`;
       shop.appendChild(m);
     }
@@ -1153,6 +1230,10 @@
     }
   }
 
+  // Day and night follow the local clock; the sky eases between them.
+  let nightTarget = nightness(), themeTimer = 0;
+  setPalette(nightTarget);
+  window.addEventListener('hashchange', () => { nightTarget = nightness(); });
   resize();
   { const tg = camTarget(); cam.x = tg.x; cam.y = tg.y; cam.lz = Math.log(tg.z); }
 
@@ -1186,6 +1267,9 @@
     requestAnimationFrame(frame);
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
+    themeTimer += dt;
+    if (themeTimer > 5) { themeTimer = 0; nightTarget = nightness(); }
+    if (Math.abs(nightTarget - N) > 0.001) setPalette(N + (nightTarget - N) * (1 - Math.exp(-dt / 1.2)));
     step(dt, false);
     stepCamera(dt);
     draw();
