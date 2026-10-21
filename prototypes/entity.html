@@ -1,0 +1,676 @@
+<title>Entity</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600&display=swap">
+<style>
+  /* Layout: the sky fills the screen; a whisper of type on top; a strip of purchases slides along the bottom. */
+  :root {
+    --sky: #FBFBF8;
+    --ink: #151515;
+    --mute: #8E8C86;
+    --line: #E6E4DE;
+    --card: rgba(255, 255, 255, 0.86);
+    --red: #DF4230;
+    --yellow: #EFB32B;
+    --blue: #2556C4;
+    --display: "Jost", "Futura", "Century Gothic", "Trebuchet MS", sans-serif;
+    color-scheme: light;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--sky); color: var(--ink); font-family: var(--display);
+    overflow: hidden; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  header {
+    position: fixed; top: 0; left: 0; right: 0; pointer-events: none;
+    background: linear-gradient(var(--sky) 55%, rgba(251, 251, 248, 0));
+    padding-bottom: 28px;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 16px);
+    padding-left: max(18px, env(safe-area-inset-left, 0px));
+    padding-right: max(18px, env(safe-area-inset-right, 0px));
+  }
+  .label { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--mute); font-weight: 500; }
+  #mass { font-size: 38px; font-weight: 300; line-height: 1.05; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  #rate { font-size: 13px; color: var(--mute); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  #reset {
+    pointer-events: auto; font: inherit; font-size: 12px; color: var(--mute); background: none; border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 12px; cursor: pointer; min-height: 32px;
+  }
+  #reset.armed { color: var(--red); border-color: var(--red); }
+  #dock {
+    position: fixed; left: 0; right: 0; bottom: 0; padding-top: 34px;
+    background: linear-gradient(rgba(251, 251, 248, 0), var(--sky) 38%);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  }
+  #title {
+    min-height: 40px; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+    padding: 0 max(18px, env(safe-area-inset-right, 0px)) 8px max(18px, env(safe-area-inset-left, 0px));
+    transition: opacity 0.5s ease;
+  }
+  #title h2 { margin: 0; font-size: 20px; font-weight: 400; letter-spacing: 0.01em; }
+  #title p { margin: 2px 0 0; font-size: 12px; color: var(--mute); font-variant-numeric: tabular-nums; }
+  #back {
+    font: inherit; font-size: 13px; color: var(--ink); background: var(--card); border: 1px solid var(--line);
+    border-radius: 999px; padding: 7px 14px; cursor: pointer; min-height: 36px;
+  }
+  #shop {
+    display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
+    padding-left: max(18px, env(safe-area-inset-left, 0px));
+    padding-right: max(18px, env(safe-area-inset-right, 0px));
+    transition: opacity 0.45s ease, transform 0.45s ease;
+  }
+  #shop::-webkit-scrollbar { display: none; }
+  #shop.swap { opacity: 0; transform: translateY(10px); }
+  .item {
+    flex: 0 0 auto; width: 132px; text-align: left; font: inherit; color: var(--ink);
+    background: var(--card); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    border: 1px solid var(--line); border-radius: 16px;
+    padding: 11px 11px 10px; display: flex; flex-direction: column; gap: 4px; cursor: pointer;
+    transition: transform 0.12s ease, opacity 0.3s ease, border-color 0.3s ease;
+  }
+  .item:active { transform: scale(0.97); }
+  .item:focus-visible, #back:focus-visible, #reset:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .item svg { width: 26px; height: 26px; }
+  .item .name { font-size: 15px; font-weight: 500; display: flex; justify-content: space-between; align-items: baseline; }
+  .item .lv { font-size: 11px; color: var(--mute); }
+  .item .what { font-size: 12px; color: var(--mute); line-height: 1.3; min-height: 31px; }
+  .item .cost { font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .item.poor { opacity: 0.45; }
+  .item.ready { border-color: var(--ink); }
+  .item.done { opacity: 0.3; cursor: default; }
+  #toast {
+    position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 96px); transform: translate(-50%, -6px);
+    font-size: 14px; color: var(--ink); letter-spacing: 0.02em; opacity: 0; pointer-events: none;
+    transition: opacity 0.8s ease, transform 0.8s ease; white-space: nowrap; max-width: calc(100vw - 36px); text-align: center;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  @media (prefers-reduced-motion: reduce) { .item, #toast, #shop, #title { transition: none; } }
+</style>
+
+<canvas id="sky" aria-label="A black entity at the centre, with dust, planets and moons slowly orbiting and falling into it"></canvas>
+<header>
+  <div>
+    <div class="label">Mass</div>
+    <div id="mass">0</div>
+    <div id="rate">absorbing 0/s</div>
+  </div>
+  <button id="reset" type="button">Begin again</button>
+</header>
+<div id="dock">
+  <div id="title"><div><h2 id="t-name"></h2><p id="t-info"></p></div><button id="back" type="button" hidden>Back</button></div>
+  <nav id="shop" aria-label="Buy"></nav>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  // ============================== constants ==============================
+  const COL = { ink: '#151515', red: '#DF4230', yellow: '#EFB32B', blue: '#2556C4', sky: '#FBFBF8', mute: '#8E8C86' };
+  const DUST_COLORS = [COL.ink, COL.ink, COL.ink, COL.ink, COL.red, COL.yellow, COL.blue];
+  const PLANET_COLORS = [COL.red, COL.blue, COL.yellow, COL.red, COL.blue];
+  const SLOTS = [100, 145, 195, 250, 310];
+  const NUMERALS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+  const KEY = 'entity.save.v1';
+  const MAX_PARTS = 2200;
+  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const fmt = (n) => {
+    if (n < 10) return (Math.floor(n * 10) / 10).toString();
+    if (n < 1000) return Math.floor(n).toString();
+    const u = ['K', 'M', 'B', 'T', 'Qa', 'Qi'];
+    let i = -1;
+    while (n >= 999.5 && i < u.length - 1) { n /= 1000; i++; }
+    return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n).toString()) + u[i];
+  };
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+
+  // ============================== state ==============================
+  // Particles orbit a parent (the entity: p = 0, or a planet by id). r eases toward rt, and rt slowly
+  // shrinks, so matter glides in from far away, settles into orbit, then spirals down and is absorbed.
+  const fresh = () => ({
+    mass: 0, total: 0, entity: 0, dust: 0, planetsBought: 0, gravity: 0, nextId: 1,
+    planets: [], parts: [], last: Date.now(),
+  });
+  let S = fresh();
+  let loaded = false;
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) { S = Object.assign(fresh(), JSON.parse(raw)); loaded = true; }
+  } catch (e) { /* storage unavailable: play without saving */ }
+  const save = () => {
+    try {
+      S.last = Date.now();
+      // Round particle data so the save stays small.
+      const r2 = (x) => Math.round(x * 100) / 100;
+      const out = { ...S, parts: S.parts.map((q) => ({ p: q.p, r: r2(q.r), rt: r2(q.rt), th: r2(q.th), vd: Math.round(q.vd * 1e4) / 1e4, s: r2(q.s), c: q.c, v: r2(q.v), tau: 0 })) };
+      localStorage.setItem(KEY, JSON.stringify(out));
+    } catch (e) {}
+  };
+
+  // ============================== rules ==============================
+  const gravMult = () => 1 + 0.2 * S.gravity;
+  const entityRadius = () => 13 + 7 * Math.log10(1 + S.entity / 60);
+  const planetRadius = (pl) => 4.5 + 2.4 * Math.cbrt(pl.mass / 40);
+  const planetById = (id) => S.planets.find((p) => p.id === id);
+  const orbitSpeed = (q, parentR) => {
+    // Kepler-ish: inner orbits faster. Planets hold their own small systems.
+    if (q.p === 0) return 210 * Math.pow(Math.max(q.r, parentR), -1.5);
+    const pl = planetById(q.p);
+    const k = 26 * Math.pow(planetRadius(pl) / 6, 1.5);
+    return k * Math.pow(Math.max(q.r, parentR), -1.5);
+  };
+  const planetPos = (pl) => ({ x: Math.cos(pl.th) * pl.r, y: Math.sin(pl.th) * pl.r });
+  const freeSlot = () => {
+    for (let i = 0; i < SLOTS.length; i++) if (!S.planets.some((p) => p.slot === i)) return i;
+    return -1;
+  };
+  const dustValue = () => 1 + 0.12 * S.dust;
+  const trickleEvery = () => 2.4 / gravMult();
+
+  // ============================== spawning ==============================
+  const viewRadius = () => Math.max(170, ...S.planets.map((p) => p.rt + 40));
+  const addEntityDust = (n, opts = {}) => {
+    const R = entityRadius();
+    for (let i = 0; i < n && S.parts.length < MAX_PARTS; i++) {
+      const rt = rand(R * (opts.close ? 1.3 : 2.3), Math.min(150, viewRadius() * 0.75));
+      // Matter sinks at a slow, fairly steady speed, so the nearest motes arrive first.
+      const life = (rt - R) / rand(0.55, 1.05);
+      const r0 = opts.instant ? rt : viewRadius() * rand(1.15, 1.6);
+      S.parts.push({
+        p: 0, r: r0, rt, th: opts.th !== undefined ? opts.th + rand(-0.6, 0.6) : rand(0, Math.PI * 2),
+        vd: (rt - R) / life, s: rand(0.7, 1.6), c: pick(DUST_COLORS), v: dustValue(), tau: opts.instant ? 0 : rand(3, 6),
+      });
+    }
+  };
+  const addPlanetMatter = (pl, n, kind) => {
+    const pr = planetRadius(pl);
+    for (let i = 0; i < n && S.parts.length < MAX_PARTS; i++) {
+      const moon = kind === 'moon';
+      const rt = moon ? pr * rand(4.2, 5.4) : rand(pr * 1.8, pr * 4.2);
+      const life = moon ? rand(150, 210) : rand(45, 100);
+      S.parts.push({
+        p: pl.id, r: rt * rand(2.2, 3.4), rt, th: rand(0, Math.PI * 2), vd: (rt - pr) / life,
+        s: moon ? rand(2.2, 2.8) : rand(0.6, 1.2), c: moon ? COL.ink : pick(DUST_COLORS), v: moon ? 40 * (1 + 0.5 * pl.moons) : 3, tau: rand(1.4, 2.4),
+      });
+    }
+  };
+
+  // ============================== purchases ==============================
+  const GLOBAL = [
+    {
+      id: 'dust', name: 'Dust', icon: '<circle cx="6" cy="9" r="1.6" fill="#151515"/><circle cx="14" cy="5" r="1.2" fill="#DF4230"/><circle cx="20" cy="12" r="1.8" fill="#151515"/><circle cx="10" cy="17" r="1.3" fill="#2556C4"/><circle cx="18" cy="21" r="1.2" fill="#EFB32B"/>',
+      what: () => `A cloud of ${24 + 3 * S.dust} motes drifts in`,
+      cost: () => 8 * Math.pow(1.28, S.dust), can: () => true, lv: () => `${S.dust}`,
+      buy: () => {
+        const th = rand(0, Math.PI * 2);
+        addEntityDust(24 + 3 * S.dust, { th });
+        S.dust++;
+        cinematic({ kind: 'drift', until: 4.5 });
+        return 'Dust drifts in from the dark';
+      },
+    },
+    {
+      id: 'planet', name: 'Planet', icon: '<circle cx="13" cy="13" r="8" fill="#2556C4"/>',
+      what: () => 'A world that gathers matter and, one day, falls in',
+      cost: () => 120 * Math.pow(3, S.planetsBought), can: () => freeSlot() >= 0,
+      lock: () => (freeSlot() < 0 ? 'Every orbit is taken' : ''),
+      lv: () => `${S.planets.length}/${SLOTS.length}`,
+      buy: () => {
+        const slot = freeSlot();
+        const rt = SLOTS[slot];
+        const pl = {
+          id: S.nextId++, slot, name: NUMERALS[S.planetsBought % NUMERALS.length], color: PLANET_COLORS[S.planetsBought % PLANET_COLORS.length],
+          r: rt * 2.1, rt, th: rand(0, Math.PI * 2), vd: rt / (480 + 110 * slot), mass: 60 * Math.pow(1.7, S.planetsBought),
+          rings: 0, moons: 0, tau: 5.5,
+        };
+        S.planets.push(pl);
+        S.planetsBought++;
+        cinematic({ kind: 'arrive', id: pl.id, until: 7 });
+        return `Planet ${pl.name} enters orbit`;
+      },
+    },
+    {
+      id: 'gravity', name: 'Gravity', icon: '<circle cx="13" cy="13" r="5" fill="#151515"/><circle cx="13" cy="13" r="10.5" fill="none" stroke="#151515" stroke-width="1.2" stroke-dasharray="2 3"/>',
+      what: () => 'Everything falls 20% sooner; more stray dust',
+      cost: () => 40 * Math.pow(2.3, S.gravity), can: () => S.gravity < 25, lv: () => `${S.gravity}`,
+      buy: () => { S.gravity++; pulse(0, 0, entityRadius() * 3.2, COL.ink, 2.4); return 'The entity pulls harder'; },
+    },
+  ];
+  const PLANET = [
+    {
+      id: 'ring', name: 'Dust ring', icon: '<circle cx="13" cy="13" r="5" fill="#DF4230"/><ellipse cx="13" cy="13" rx="11" ry="4" fill="none" stroke="#151515" stroke-width="1.2" stroke-dasharray="1.5 2.5"/>',
+      what: (pl) => `${14 + 2 * pl.rings} motes; it grows heavier as they fall`,
+      cost: (pl) => 30 * Math.pow(1.45, pl.rings) * Math.pow(1.5, pl.slot), can: () => true, lv: (pl) => `${pl.rings}`,
+      buy: (pl) => { addPlanetMatter(pl, 14 + 2 * pl.rings, 'dust'); pl.rings++; return `Dust settles around Planet ${pl.name}`; },
+    },
+    {
+      id: 'moon', name: 'Moon', icon: '<circle cx="10" cy="15" r="6.5" fill="#2556C4"/><circle cx="21" cy="6" r="2.6" fill="#151515"/>',
+      what: () => 'A moon that circles for minutes, then falls in',
+      cost: (pl) => 90 * Math.pow(2.4, pl.moons) * Math.pow(1.5, pl.slot), can: (pl) => pl.moons < 4, lv: (pl) => `${pl.moons}/4`,
+      buy: (pl) => { addPlanetMatter(pl, 1, 'moon'); pl.moons++; return `Planet ${pl.name} captures a moon`; },
+    },
+  ];
+
+  // ============================== camera ==============================
+  // Critically damped springs: every move eases in and out, and a moving target is followed smoothly.
+  const cam = { x: 0, y: 0, vx: 0, vy: 0, lz: 0, vlz: 0 };
+  let focus = 0;          // planet id being viewed up close (0 = the whole system)
+  let scene = null;       // a short camera moment after a purchase
+  const cinematic = (s) => { scene = { ...s, t: 0 }; };
+  const camTarget = () => {
+    const minDim = Math.min(W, H);
+    const overview = { x: 0, y: 0, z: (minDim / 2 - 18) / (viewRadius() * 0.92) };
+    const near = (pl) => {
+      const p = planetPos(pl);
+      // Lead the planet by its motion: a spring chasing a moving target otherwise trails behind it.
+      const w = 210 * Math.pow(pl.r, -1.5), lead = 2 / 2.4;
+      const vx = -Math.sin(pl.th) * pl.r * w, vy = Math.cos(pl.th) * pl.r * w;
+      return { x: p.x + vx * lead, y: p.y + vy * lead, z: (minDim * 0.36) / (planetRadius(pl) * 5.5) };
+    };
+    if (focus) {
+      const pl = planetById(focus);
+      if (pl) return near(pl);
+      focus = 0;
+    }
+    if (scene && scene.kind === 'arrive') {
+      const pl = planetById(scene.id);
+      if (pl) {
+        const n = near(pl);
+        // Halfway between the whole system and the newcomer, so you see it sweep in.
+        return { x: n.x * 0.75, y: n.y * 0.75, z: Math.sqrt(n.z * overview.z) * 0.8 };
+      }
+    }
+    if (scene && scene.kind === 'drift') return { ...overview, z: overview.z * 0.86 };
+    return overview;
+  };
+  const stepCamera = (dt) => {
+    const tg = camTarget();
+    const w = reduced ? 6 : focus ? 2.4 : scene && scene.kind === 'arrive' ? 1.6 : 1.25;
+    const spring = (x, v, target) => {
+      const a = w * w * (target - x) - 2 * w * v;
+      v += a * dt;
+      return [x + v * dt, v];
+    };
+    [cam.x, cam.vx] = spring(cam.x, cam.vx, tg.x);
+    [cam.y, cam.vy] = spring(cam.y, cam.vy, tg.y);
+    [cam.lz, cam.vlz] = spring(cam.lz, cam.vlz, Math.log(tg.z));
+  };
+
+  // ============================== simulation ==============================
+  let W = 0, H = 0, dpr = 1, t = 0;
+  const ripples = [];
+  const pulse = (x, y, r, color, life = 1.6, parent = 0) => ripples.push({ x, y, r, color, life, t: 0, parent });
+  const gains = [];
+  let gainAcc = 0;
+  const absorbInto = (q, parentR) => {
+    if (q.p === 0) {
+      S.entity += q.v; S.mass += q.v; S.total += q.v; gainAcc += q.v;
+      const a = q.th;
+      pulse(Math.cos(a) * parentR, Math.sin(a) * parentR, q.s * 2.2, q.c, 1.1);
+    } else {
+      const pl = planetById(q.p);
+      if (pl) {
+        pl.mass += q.v * 1.5;
+        pulse(Math.cos(q.th) * parentR, Math.sin(q.th) * parentR, q.s * 2, q.c, 1, pl.id);
+      }
+    }
+  };
+
+  const step = (dt, quiet) => {
+    t += dt;
+    const g = gravMult();
+    const R = entityRadius();
+    // Planets: settle into their orbit, then very slowly spiral inward.
+    for (const pl of S.planets) {
+      if (pl.merging !== undefined) continue;
+      pl.rt = Math.max(R * 0.4, pl.rt - pl.vd * g * dt);
+      const k = pl.tau > 0 ? 1 - Math.exp(-dt / pl.tau) : 1;
+      pl.r += (pl.rt - pl.r) * k;
+      if (pl.tau > 0 && Math.abs(pl.r - pl.rt) < 0.5) pl.tau = 0;
+      pl.th += 210 * Math.pow(pl.r, -1.5) * dt;
+      if (pl.r <= R + planetRadius(pl) * 0.6) beginMerge(pl, quiet);
+    }
+    // Planets falling into the entity: shrink, sink, then vanish in a slow wave.
+    for (let i = S.planets.length - 1; i >= 0; i--) {
+      const pl = S.planets[i];
+      if (pl.merging === undefined) continue;
+      pl.merging += dt;
+      pl.th += 210 * Math.pow(Math.max(pl.r, R), -1.5) * dt;
+      pl.r = R * (1 - 0.7 * ease(Math.min(1, pl.merging / 2.6)));
+      if (pl.merging >= 2.6) {
+        S.entity += pl.mass; S.mass += pl.mass; S.total += pl.mass; gainAcc += pl.mass;
+        if (!quiet) {
+          pulse(0, 0, R * 4.5, pl.color, 3.2);
+          pulse(0, 0, R * 2.6, COL.ink, 2.4);
+          toast(`Planet ${pl.name} joins the entity · +${fmt(pl.mass)}`);
+        }
+        if (focus === pl.id) setFocus(0);
+        S.planets.splice(i, 1);
+      }
+    }
+    // Particles.
+    const parts = S.parts;
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const q = parts[i];
+      const pl = q.p ? planetById(q.p) : null;
+      if (q.p && !pl) { parts.splice(i, 1); continue; }
+      const parentR = q.p ? planetRadius(pl) : R;
+      q.rt -= q.vd * g * dt;
+      if (q.tau > 0) {
+        q.r += (q.rt - q.r) * (1 - Math.exp(-dt / q.tau));
+        if (Math.abs(q.r - q.rt) < 0.3) q.tau = 0;
+      } else q.r = q.rt;
+      q.th += orbitSpeed(q, parentR) * dt;
+      if (q.r <= parentR) {
+        absorbInto(q, parentR);
+        parts[i] = parts[parts.length - 1];
+        parts.pop();
+      }
+    }
+    // A slow trickle of stray dust, always.
+    S.trickle = (S.trickle || 0) + dt;
+    while (S.trickle > trickleEvery()) { S.trickle -= trickleEvery(); addEntityDust(1, quiet ? { instant: true } : {}); }
+
+    if (!quiet) {
+      for (const r of ripples) r.t += dt;
+      for (let i = ripples.length - 1; i >= 0; i--) if (ripples[i].t > ripples[i].life) ripples.splice(i, 1);
+      if (scene) { scene.t += dt; if (scene.t > scene.until) scene = null; }
+      // Absorption rate over the last ~20 s, for the readout.
+      gains.push(gainAcc); gainAcc = 0;
+      while (gains.length > 1200) gains.shift();
+    }
+  };
+
+  const beginMerge = (pl, quiet) => {
+    pl.merging = 0;
+    // Its satellites are released into orbit around the entity.
+    const pp = planetPos(pl), R = entityRadius();
+    for (const q of S.parts) {
+      if (q.p !== pl.id) continue;
+      const x = pp.x + Math.cos(q.th) * q.r, y = pp.y + Math.sin(q.th) * q.r;
+      const r = Math.max(R * 1.4, Math.hypot(x, y));
+      q.p = 0; q.r = r; q.rt = r; q.th = Math.atan2(y, x); q.vd = (r - R) / rand(20, 50); q.tau = 0;
+    }
+    if (!quiet) toast(`Planet ${pl.name} is falling in`);
+  };
+
+  // ============================== drawing ==============================
+  const canvas = document.getElementById('sky');
+  const ctx = canvas.getContext('2d');
+  const resize = () => {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  };
+  window.addEventListener('resize', resize);
+  // The sky's centre sits a little above the middle, clear of the purchases at the bottom.
+  const viewCenter = () => ({ x: W / 2, y: H * 0.46 });
+
+  const draw = () => {
+    const z = Math.exp(cam.lz);
+    const vc = viewCenter();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = COL.sky;
+    ctx.fillRect(0, 0, W, H);
+    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (vc.x - cam.x * z), dpr * (vc.y - cam.y * z));
+    const px = 1 / z; // one screen pixel in world units
+    const R = entityRadius() * (1 + 0.012 * Math.sin(t * 0.7));
+
+    // Faint orbit guides for planets.
+    ctx.lineWidth = px;
+    ctx.strokeStyle = 'rgba(21,21,21,0.07)';
+    for (const pl of S.planets) {
+      ctx.beginPath();
+      ctx.arc(0, 0, pl.r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // The entity's soft halo.
+    const halo = ctx.createRadialGradient(0, 0, R * 0.9, 0, 0, R * 3.4);
+    halo.addColorStop(0, 'rgba(21,21,21,0.10)');
+    halo.addColorStop(1, 'rgba(21,21,21,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(0, 0, R * 3.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Dust: a short arc of trail behind each mote, then the mote itself. Batched by colour.
+    const pp = new Map();
+    for (const pl of S.planets) pp.set(pl.id, planetPos(pl));
+    const trails = new Map(), heads = new Map();
+    const trailScale = Math.min(1, z / 1.2) * 0.9 + 0.1;
+    for (const q of S.parts) {
+      const c = q.p ? pp.get(q.p) : null;
+      const ox = c ? c.x : 0, oy = c ? c.y : 0;
+      const parentR = q.p ? planetRadius(planetById(q.p)) : R;
+      const w = orbitSpeed(q, parentR);
+      const len = Math.min(1.1, w * 1.6) * trailScale;
+      let tp = trails.get(q.c);
+      if (!tp) { tp = new Path2D(); trails.set(q.c, tp); }
+      const x = ox + Math.cos(q.th) * q.r, y = oy + Math.sin(q.th) * q.r;
+      tp.moveTo(ox + Math.cos(q.th - len) * q.r, oy + Math.sin(q.th - len) * q.r);
+      tp.arc(ox, oy, q.r, q.th - len, q.th);
+      let hp = heads.get(q.c);
+      if (!hp) { hp = new Path2D(); heads.set(q.c, hp); }
+      const s = q.s * Math.max(px * 1.2, 0.55);
+      hp.moveTo(x + s, y);
+      hp.arc(x, y, s, 0, Math.PI * 2);
+    }
+    ctx.lineCap = 'round';
+    for (const [c, p] of trails) {
+      ctx.strokeStyle = c;
+      ctx.globalAlpha = c === COL.ink ? 0.13 : 0.22;
+      ctx.lineWidth = Math.max(px * 0.9, 0.5);
+      ctx.stroke(p);
+    }
+    for (const [c, p] of heads) {
+      ctx.globalAlpha = c === COL.ink ? 0.75 : 0.95;
+      ctx.fillStyle = c;
+      ctx.fill(p);
+    }
+    ctx.globalAlpha = 1;
+
+    // Ripples where matter lands (on the entity, or on a planet that moves).
+    for (const r of ripples) {
+      const k = r.t / r.life;
+      const o = r.parent ? pp.get(r.parent) : null;
+      const x = r.x + (o ? o.x : 0), y = r.y + (o ? o.y : 0);
+      ctx.strokeStyle = r.color;
+      ctx.globalAlpha = (1 - k) * (r.r > 20 ? 0.55 : 0.7);
+      ctx.lineWidth = Math.max(px * (r.r > 20 ? 2 : 1.2), 0.3);
+      ctx.beginPath();
+      ctx.arc(x, y, r.r * (0.3 + ease(k) * 0.9), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Planets.
+    for (const pl of S.planets) {
+      const p = pp.get(pl.id);
+      let pr = planetRadius(pl);
+      if (pl.merging !== undefined) pr *= 1 - ease(Math.min(1, pl.merging / 2.6));
+      ctx.fillStyle = pl.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, pr, 0, Math.PI * 2);
+      ctx.fill();
+      if (focus === pl.id) {
+        ctx.strokeStyle = 'rgba(21,21,21,0.25)';
+        ctx.lineWidth = px;
+        ctx.setLineDash([3 * px, 4 * px]);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, pr + 6 * px, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    // The entity.
+    ctx.fillStyle = COL.ink;
+    ctx.beginPath();
+    ctx.arc(0, 0, R, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  // ============================== interface ==============================
+  const shop = document.getElementById('shop');
+  const titleName = document.getElementById('t-name'), titleInfo = document.getElementById('t-info');
+  const back = document.getElementById('back');
+  let cards = [];
+  let cardsFor = 0; // which planet the cards belong to (0 = the whole system)
+  const buildShop = () => {
+    const pl = focus ? planetById(focus) : null;
+    const list = pl ? PLANET : GLOBAL;
+    cardsFor = pl ? pl.id : 0;
+    shop.replaceChildren();
+    cards = list.map((it) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'item';
+      b.id = `buy-${it.id}`;
+      b.innerHTML = `<svg viewBox="0 0 26 26" aria-hidden="true">${it.icon}</svg>
+        <span class="name">${it.name}<span class="lv"></span></span><span class="what"></span><span class="cost"></span>`;
+      b.addEventListener('click', () => {
+        const target = cardsFor ? planetById(cardsFor) : null;
+        if (cardsFor && !target) return;
+        const c = it.cost(target);
+        if (!it.can(target) || S.mass < c) return;
+        S.mass -= c;
+        toast(it.buy(target));
+        refresh(); save();
+      });
+      shop.appendChild(b);
+      return { it, b, lv: b.querySelector('.lv'), what: b.querySelector('.what'), cost: b.querySelector('.cost') };
+    });
+    back.hidden = !pl;
+  };
+  const setFocus = (id) => {
+    if (focus === id) return;
+    focus = id;
+    scene = null;
+    shop.classList.add('swap');
+    setTimeout(() => { buildShop(); refresh(); shop.classList.remove('swap'); }, reduced ? 0 : 280);
+  };
+  back.addEventListener('click', () => setFocus(0));
+
+  const massEl = document.getElementById('mass'), rateEl = document.getElementById('rate');
+  const refresh = () => {
+    massEl.textContent = fmt(S.mass);
+    const secs = Math.max(1, gains.length / 60);
+    const rate = gains.reduce((a, b) => a + b, 0) / secs;
+    rateEl.textContent = `absorbing ${fmt(rate)}/s`;
+    const pl = focus ? planetById(focus) : null;
+    if (pl) {
+      titleName.textContent = `Planet ${pl.name}`;
+      const eta = (pl.r - entityRadius() - planetRadius(pl) * 0.6) / (pl.vd * gravMult());
+      const sats = S.parts.filter((q) => q.p === pl.id).length;
+      titleInfo.textContent = pl.merging !== undefined ? 'Falling into the entity'
+        : `Mass ${fmt(pl.mass)} · ${sats} in orbit · falls in about ${eta > 90 ? `${Math.round(eta / 60)} min` : `${Math.max(1, Math.round(eta))} s`}`;
+    } else {
+      titleName.textContent = 'The entity';
+      titleInfo.textContent = S.planets.length ? 'Tap a planet to tend it' : `${S.parts.length} motes in orbit`;
+    }
+    // While the panel is swapping (or its planet has just fallen in), leave the old cards alone.
+    if (cardsFor !== (pl ? pl.id : 0)) return;
+    for (const c of cards) {
+      const target = pl;
+      const can = c.it.can(target), cost = c.it.cost(target), lock = c.it.lock ? c.it.lock() : '';
+      c.lv.textContent = c.it.lv(target);
+      c.what.textContent = lock || c.it.what(target);
+      c.cost.textContent = can ? `${fmt(cost)}` : lock ? 'Unavailable' : 'Complete';
+      c.b.classList.toggle('done', !can);
+      c.b.classList.toggle('poor', can && S.mass < cost);
+      c.b.classList.toggle('ready', can && S.mass >= cost);
+      c.b.setAttribute('aria-disabled', String(!can || S.mass < cost));
+    }
+  };
+
+  // Tap a planet to glide in; tap empty sky to glide back out.
+  let down = null;
+  canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+  canvas.addEventListener('pointerup', (e) => {
+    if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 12) { down = null; return; }
+    down = null;
+    const z = Math.exp(cam.lz), vc = viewCenter();
+    const wx = (e.clientX - vc.x) / z + cam.x, wy = (e.clientY - vc.y) / z + cam.y;
+    let best = null, bestD = Infinity;
+    for (const pl of S.planets) {
+      if (pl.merging !== undefined) continue;
+      const p = planetPos(pl);
+      const d = Math.hypot(p.x - wx, p.y - wy);
+      const reach = Math.max(planetRadius(pl) * 2.2, 26 / z);
+      if (d < reach && d < bestD) { best = pl; bestD = d; }
+    }
+    if (best) setFocus(best.id);
+    else if (focus) setFocus(0);
+  });
+
+  const toastEl = document.getElementById('toast');
+  let toastTimer = 0;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2800);
+  }
+
+  const resetBtn = document.getElementById('reset');
+  let armed = 0;
+  resetBtn.addEventListener('click', () => {
+    if (!armed) {
+      armed = setTimeout(() => { armed = 0; resetBtn.classList.remove('armed'); resetBtn.textContent = 'Begin again'; }, 2500);
+      resetBtn.classList.add('armed');
+      resetBtn.textContent = 'Tap again to begin again';
+      return;
+    }
+    clearTimeout(armed); armed = 0;
+    S = fresh(); begin(); focus = 0; scene = null; buildShop(); refresh(); save();
+    resetBtn.classList.remove('armed'); resetBtn.textContent = 'Begin again';
+  });
+
+  // ============================== start ==============================
+  const begin = () => { addEntityDust(70, { instant: true, close: true }); S.mass = 0; };
+  if (!loaded || !S.parts.length) begin();
+
+  // Time away: let the system keep turning, in coarse steps (up to an hour).
+  if (loaded) {
+    const away = Math.min(3600, Math.max(0, (Date.now() - (S.last || Date.now())) / 1000));
+    if (away > 20) {
+      const before = S.mass;
+      for (let s = 0; s < away; s += 1) step(1, true);
+      const gained = S.mass - before;
+      if (gained > 0) setTimeout(() => toast(`While you were away the entity absorbed ${fmt(gained)}`), 600);
+    }
+  }
+
+  resize();
+  // Start already framing the system.
+  { const tg = camTarget(); cam.x = tg.x; cam.y = tg.y; cam.lz = Math.log(tg.z); }
+  buildShop();
+  refresh();
+  let last = performance.now(), uiTimer = 0, saveTimer = 0;
+  const frame = (now) => {
+    requestAnimationFrame(frame);
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    step(dt, false);
+    stepCamera(dt);
+    draw();
+    uiTimer += dt; saveTimer += dt;
+    if (uiTimer > 0.25) { uiTimer = 0; refresh(); }
+    if (saveTimer > 6) { saveTimer = 0; save(); }
+  };
+  requestAnimationFrame(frame);
+  // Test hook: window.__entity.S is the live state.
+  window.__entity = { get S() { return S; }, planetScreen: (id) => {
+    const pl = planetById(id), z = Math.exp(cam.lz), vc = viewCenter(), p = planetPos(pl);
+    return { x: vc.x + (p.x - cam.x) * z, y: vc.y + (p.y - cam.y) * z };
+  } };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) save(); else last = performance.now(); });
+  window.addEventListener('pagehide', save);
+})();
+</script>
