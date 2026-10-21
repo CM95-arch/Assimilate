@@ -93,6 +93,19 @@
   #intro p { margin: 0; font-size: 13px; color: var(--mute); letter-spacing: 0.08em; }
   header, #dock { transition: opacity 1.4s ease; }
   body.opening header, body.opening #dock, body.opening #home { opacity: 0; pointer-events: none; }
+  /* Test panel: only with #dev in the link. */
+  #dev { position: fixed; z-index: 5; left: max(18px, env(safe-area-inset-left, 0px)); top: calc(env(safe-area-inset-top, 0px) + 112px); }
+  #dev-panel {
+    margin-top: 8px; padding: 10px; border-radius: 16px; background: var(--card); border: 1px solid var(--line);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); display: grid; gap: 8px; max-width: calc(100vw - 36px);
+  }
+  .dev-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .dev-row span { width: 58px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mute); }
+  .dev-row button {
+    font: inherit; font-size: 13px; color: var(--ink); background: none; border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 10px; min-height: 32px; cursor: pointer;
+  }
+  .dev-row button[aria-pressed="true"] { background: var(--ink); color: var(--sky); border-color: var(--ink); }
   #home {
     position: fixed; right: max(18px, env(safe-area-inset-right, 0px)); top: calc(env(safe-area-inset-top, 0px) + 64px);
     width: 40px; height: 40px; padding: 0; font-size: 18px; line-height: 1;
@@ -120,6 +133,16 @@
   <nav id="shop" aria-label="Buy"></nav>
 </div>
 <button id="home" class="pill" type="button" hidden aria-label="Back to the normal view">◎</button>
+<div id="dev" hidden>
+  <button id="dev-toggle" class="pill" type="button">Test</button>
+  <div id="dev-panel" hidden>
+    <div class="dev-row"><span>Mass</span><button type="button" data-mass="1e3">+1K</button><button type="button" data-mass="1e5">+100K</button><button type="button" data-mass="1e7">+10M</button></div>
+    <div class="dev-row"><span>Unlocks</span><button type="button" id="dev-unlock">Reveal all</button></div>
+    <div class="dev-row"><span>Speed</span><button type="button" data-speed="1">1×</button><button type="button" data-speed="4">4×</button><button type="button" data-speed="16">16×</button></div>
+    <div class="dev-row"><span>Time</span><button type="button" id="dev-skip">Skip 5 min</button></div>
+    <div class="dev-row"><span>Sky</span><button type="button" data-sky="auto">Auto</button><button type="button" data-sky="day">Day</button><button type="button" data-sky="night">Night</button></div>
+  </div>
+</div>
 <div id="intro" aria-hidden="true"><h1>Entity</h1><p>Everything falls inward, eventually</p></div>
 <div id="toast" role="status" aria-live="polite"></div>
 
@@ -156,8 +179,9 @@
   };
   const paint = (c) => PALS[c] || PALS[COL.ink];
   // How dark the sky should be at this local time: dusk from 18:30 to 20:30, dawn from 5:30 to 7:30.
+  let skyOverride = ''; // set from the test panel: '', 'day' or 'night'
   const nightness = (d = new Date()) => {
-    const forced = location.hash.replace('#', '');
+    const forced = skyOverride || location.hash.replace('#', '');
     if (forced === 'night') return 1;
     if (forced === 'day') return 0;
     const h = d.getHours() + d.getMinutes() / 60;
@@ -1230,6 +1254,41 @@
     }
   }
 
+  // ---------------- test panel (#dev in the link) ----------------
+  let simSpeed = 1, devOn = false;
+  const enableDev = () => {
+    if (devOn || location.hash.replace('#', '') !== 'dev') return;
+    devOn = true;
+    const dev = document.getElementById('dev'), panel = document.getElementById('dev-panel');
+    dev.hidden = false;
+    const mark = (attr, val) => dev.querySelectorAll(`[data-${attr}]`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset[attr] === String(val))));
+    mark('speed', 1); mark('sky', 'auto');
+    document.getElementById('dev-toggle').addEventListener('click', () => { panel.hidden = !panel.hidden; });
+    dev.querySelectorAll('[data-mass]').forEach((b) => b.addEventListener('click', () => {
+      const v = Number(b.dataset.mass);
+      S.mass += v; S.total += v;
+      refresh();
+    }));
+    document.getElementById('dev-unlock').addEventListener('click', () => {
+      S.total = Math.max(S.total, 1e9);
+      refresh();
+    });
+    dev.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => { simSpeed = Number(b.dataset.speed); mark('speed', simSpeed); }));
+    document.getElementById('dev-skip').addEventListener('click', () => {
+      const before = S.total;
+      for (let i = 0; i < 300; i++) step(1, true);
+      toast(`Five minutes pass · +${fmt(S.total - before)}`);
+      refresh();
+    });
+    dev.querySelectorAll('[data-sky]').forEach((b) => b.addEventListener('click', () => {
+      skyOverride = b.dataset.sky === 'auto' ? '' : b.dataset.sky;
+      nightTarget = nightness();
+      mark('sky', b.dataset.sky);
+    }));
+  };
+  enableDev();
+  window.addEventListener('hashchange', enableDev);
+
   // Day and night follow the local clock; the sky eases between them.
   let nightTarget = nightness(), themeTimer = 0;
   setPalette(nightTarget);
@@ -1270,7 +1329,7 @@
     themeTimer += dt;
     if (themeTimer > 5) { themeTimer = 0; nightTarget = nightness(); }
     if (Math.abs(nightTarget - N) > 0.001) setPalette(N + (nightTarget - N) * (1 - Math.exp(-dt / 1.2)));
-    step(dt, false);
+    for (let i = 0; i < simSpeed; i++) step(dt, false);
     stepCamera(dt);
     draw();
     uiTimer += dt; saveTimer += dt;
